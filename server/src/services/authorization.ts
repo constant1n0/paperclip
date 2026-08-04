@@ -102,6 +102,7 @@ export type AuthorizationDecision = {
     | "allow_consented_change"
     | "allow_legacy_agent_creator"
     | "allow_issue_mention_grant"
+    | "allow_visible_issue_write"
     | "allow_self"
     | "allow_company_agent"
     | "allow_company_member"
@@ -1331,6 +1332,76 @@ export function authorizationService(db: Db) {
     const permissionKey = permissionForAction(input.action);
     const companyId = companyIdForResource(input.resource);
 
+    /**
+     * Shared default-open decision for issue write-influence channels.
+     *
+     * Keep visibility structurally upstream of every standard-trust write so
+     * future visibility scoping can be implemented in issue:read without
+     * recreating per-action scope checks. The responsible-user ceiling remains
+     * in decide(), after this base decision.
+     */
+    async function decideVisibleIssueWrite(): Promise<AuthorizationDecision> {
+      let visibilityResource: AuthorizationResource = input.resource;
+
+      // New-child assignment decisions identify the issue being influenced by
+      // parentIssueId. Resolve that parent into the same resource shape used by
+      // issue:read so child-create and assign share the visibility hook.
+      if (
+        input.resource.type === "issue" &&
+        !input.resource.issueId &&
+        input.resource.parentIssueId
+      ) {
+        const parent = await loadIssue(input.resource.parentIssueId);
+        if (!parent || parent.companyId !== companyId) {
+          return deny({
+            action: input.action,
+            reason: "deny_company_boundary",
+            explanation: "The issue write target is not visible in this company.",
+          });
+        }
+        visibilityResource = {
+          type: "issue",
+          companyId: parent.companyId,
+          issueId: parent.id,
+          projectId: parent.projectId,
+          parentIssueId: parent.parentId,
+          assigneeAgentId: parent.assigneeAgentId,
+          assigneeUserId: parent.assigneeUserId,
+          originKind: parent.originKind,
+          originId: parent.originId,
+          status: parent.status,
+        };
+      }
+
+      const visibilityDecision = visibilityResource.type === "issue" && visibilityResource.issueId
+        ? await decideBase({
+            actor: input.actor,
+            action: "issue:read",
+            resource: visibilityResource,
+            scope: input.scope,
+          })
+        : await decideBase({
+            actor: input.actor,
+            action: "company_scope:read",
+            resource: { type: "company", companyId },
+            scope: input.scope,
+          });
+
+      if (!visibilityDecision.allowed) {
+        return {
+          ...visibilityDecision,
+          action: input.action,
+          explanation: `Issue write denied because the target is not visible: ${visibilityDecision.explanation}`,
+        };
+      }
+
+      return allow({
+        action: input.action,
+        reason: "allow_visible_issue_write",
+        explanation: "Allowed by the shared default-open visible-issue write rule.",
+      });
+    }
+
     async function decideWithTaskAssignmentGrants(
       principalType: PrincipalType,
       principalId: string,
@@ -1682,16 +1753,17 @@ export function authorizationService(db: Db) {
       if (taskBridgeDecision) return taskBridgeDecision;
     }
 
+    const trustResolution = await resolveActorTrust({
+      actorAgent,
+      actor: input.actor,
+      companyId,
+      resource: input.resource,
+    });
     const lowTrustDecision = await decideLowTrustAccess({
       actorAgentId,
       action: input.action,
       resource: input.resource,
-      resolution: await resolveActorTrust({
-        actorAgent,
-        actor: input.actor,
-        companyId,
-        resource: input.resource,
-      }),
+      resolution: trustResolution,
     });
     if (lowTrustDecision) {
       if (!lowTrustDecision.allowed) return lowTrustDecision;
@@ -1709,6 +1781,14 @@ export function authorizationService(db: Db) {
       }
     }
 
+    const visibleIssueWriteDecision =
+      trustResolution.kind === "standard" &&
+      (input.action === "issue:comment" || input.action === "issue:mutate")
+        ? await decideVisibleIssueWrite()
+        : null;
+    if (visibleIssueWriteDecision && !visibleIssueWriteDecision.allowed) {
+      return visibleIssueWriteDecision;
+    }
 
     if (input.action === "inbox:manage") {
       if (!isSimpleAssignableAgentStatus(actorAgent.status)) {
@@ -1866,10 +1946,11 @@ export function authorizationService(db: Db) {
         if (grantDecision.allowed) return grantDecision;
         return denyRestrictedAssignmentPolicy(policyEffect);
       }
+      if (trustResolution.kind === "standard") return decideVisibleIssueWrite();
       return allow({
         action: input.action,
         reason: "allow_simple_company_member",
-        explanation: "Allowed by simple mode company-wide task assignment default.",
+        explanation: "Allowed by the existing bounded task assignment rule.",
       });
     }
 
@@ -1902,6 +1983,7 @@ export function authorizationService(db: Db) {
       ) {
         return allowIssueMentionGrant(input.action);
       }
+      if (visibleIssueWriteDecision) return visibleIssueWriteDecision;
     }
     if (
       input.action === "agent_config:update" &&
