@@ -82,6 +82,7 @@ import {
   type IssueWakeDiagnosticWakeFailureClass,
   type IssueWakeDiagnosticWakeRequest,
   type IssueWakeDiagnosticsResponse,
+  type IssueCommentDispositionStatus,
   type IssueRelationIssueSummary,
   type IssueWatchdogDiscoveryKind,
   type ProjectWorkspace,
@@ -10021,6 +10022,202 @@ export function issueRoutes(
       });
     }
 
+    // Structured disposition comments (upstream #7682): the missing_disposition
+    // recovery card is only cleared by a status transition out of in_progress,
+    // which historically required a separate PATCH that agents never issue —
+    // they re-comment instead and the heartbeat re-files the card. When the
+    // comment carries a `disposition` and the issue is in_progress, apply the
+    // same status-transition path the PATCH route uses (same mutation and
+    // recovery-authority gates, same update service, same successful-run
+    // handoff resolution logging) so every existing clearing path fires
+    // unchanged. The comment is already committed above, so a rejected
+    // transition must degrade to a machine-readable warning — never a 500.
+    let dispositionResult:
+      | { applied: true; status: string }
+      | { applied: false; warning: { code: string; message: string; issueStatus?: string; details?: unknown } }
+      | null = null;
+    let dispositionApplied = false;
+    const requestedDisposition = req.body.disposition as IssueCommentDispositionStatus | undefined;
+    if (requestedDisposition && currentIssue.status !== "in_progress") {
+      dispositionResult = {
+        applied: false,
+        warning: {
+          code: "issue_not_in_progress",
+          message: `Disposition comments only transition in_progress issues; this issue is ${currentIssue.status}.`,
+          issueStatus: currentIssue.status,
+        },
+      };
+    } else if (requestedDisposition) {
+      // The shared mutation gates respond through `res` on denial; capture the
+      // denial instead of sending it because the committed comment must still
+      // return a 201 with a warning.
+      const gateCapture: { body: unknown } = { body: null };
+      const gateRes = {
+        status() {
+          return this;
+        },
+        json(body: unknown) {
+          gateCapture.body = body;
+          return this;
+        },
+      } as unknown as Response;
+      try {
+        const issueBeforeDisposition = currentIssue;
+        const mutationAllowed = await assertAgentIssueMutationAllowed(req, gateRes, issueBeforeDisposition, {
+          allowVisibleIssueWrite: true,
+        });
+        const activeRecoveryAction = mutationAllowed
+          ? await recoveryActionsSvc.getActiveForIssue(issueBeforeDisposition.companyId, issueBeforeDisposition.id)
+          : null;
+        const recoveryAuthorityAllowed =
+          mutationAllowed &&
+          (await assertRecoveryActionAuthority(req, gateRes, issueBeforeDisposition, activeRecoveryAction, {
+            source: "issue_update",
+          }));
+        if (!mutationAllowed || !recoveryAuthorityAllowed) {
+          const captured = gateCapture.body as { error?: unknown; details?: unknown } | null;
+          dispositionResult = {
+            applied: false,
+            warning: {
+              code: "transition_rejected",
+              message: typeof captured?.error === "string" ? captured.error : "Disposition transition rejected",
+              details: captured?.details,
+            },
+          };
+        } else {
+          const transition = applyIssueExecutionPolicyTransition({
+            issue: issueBeforeDisposition,
+            policy: normalizeIssueExecutionPolicy(issueBeforeDisposition.executionPolicy ?? null),
+            requestedStatus: requestedDisposition,
+            requestedAssigneePatch: {},
+            actor: {
+              agentId: actor.agentId ?? null,
+              userId: actor.actorType === "user" ? actor.actorId : null,
+            },
+            commentBody: req.body.body,
+          });
+          const dispositionDecision = transition.decision;
+          const dispositionDecisionId = dispositionDecision ? randomUUID() : null;
+          if (dispositionDecisionId) {
+            const nextExecutionState = transition.patch.executionState;
+            if (!nextExecutionState || typeof nextExecutionState !== "object") {
+              throw new Error("Execution policy decision patch is missing executionState");
+            }
+            transition.patch.executionState = {
+              ...nextExecutionState,
+              lastDecisionId: dispositionDecisionId,
+            };
+          }
+          const dispositionUpdateFields = {
+            ...transition.patch,
+            status: typeof transition.patch.status === "string" ? transition.patch.status : requestedDisposition,
+          };
+          await assertAgentInReviewReviewPath({
+            existing: issueBeforeDisposition,
+            updateFields: dispositionUpdateFields,
+            actorType: req.actor.type,
+          });
+          const dispositionUpdatePatch = {
+            ...dispositionUpdateFields,
+            actorAgentId: actor.agentId ?? null,
+            actorUserId: actor.actorType === "user" ? actor.actorId : null,
+          };
+          const updated = dispositionDecision && dispositionDecisionId
+            ? await db.transaction(async (tx) => {
+                const row = await svc.update(id, dispositionUpdatePatch, tx);
+                if (!row) return null;
+                await tx.insert(issueExecutionDecisions).values({
+                  id: dispositionDecisionId,
+                  companyId: row.companyId,
+                  issueId: row.id,
+                  stageId: dispositionDecision.stageId,
+                  stageType: dispositionDecision.stageType,
+                  actorAgentId: actor.agentId ?? null,
+                  actorUserId: actor.actorType === "user" ? actor.actorId : null,
+                  outcome: dispositionDecision.outcome,
+                  body: dispositionDecision.body,
+                  createdByRunId: actor.runId ?? null,
+                });
+                return row;
+              })
+            : await svc.update(id, dispositionUpdatePatch);
+          if (!updated) {
+            dispositionResult = {
+              applied: false,
+              warning: { code: "transition_rejected", message: "Issue not found" },
+            };
+          } else {
+            currentIssue = updated;
+            dispositionApplied = issueBeforeDisposition.status !== updated.status;
+            dispositionResult = { applied: true, status: updated.status };
+
+            await logActivity(db, {
+              companyId: updated.companyId,
+              actorType: actor.actorType,
+              actorId: actor.actorId,
+              agentId: actor.agentId,
+              runId: actor.runId,
+              agentApiKeyId: actor.agentApiKeyId,
+              action: "issue.updated",
+              entityType: "issue",
+              entityId: updated.id,
+              details: {
+                status: updated.status,
+                identifier: updated.identifier,
+                source: "disposition_comment",
+                disposition: requestedDisposition,
+                commentId: comment.id,
+                _previous: { status: issueBeforeDisposition.status },
+              },
+            });
+
+            if (issueBeforeDisposition.status === "in_progress" && updated.status !== "in_progress") {
+              await listSuccessfulRunHandoffStates(db, updated.companyId, [updated.id], { hydrateLiveness: false })
+                .then(async (handoffStates) => {
+                  const handoff = handoffStates.get(updated.id);
+                  if (handoff?.state !== "required") return;
+                  await logActivity(db, {
+                    companyId: updated.companyId,
+                    actorType: actor.actorType,
+                    actorId: actor.actorId,
+                    agentId: actor.agentId,
+                    runId: actor.runId,
+                    agentApiKeyId: actor.agentApiKeyId,
+                    action: "issue.successful_run_handoff_resolved",
+                    entityType: "issue",
+                    entityId: updated.id,
+                    details: {
+                      identifier: updated.identifier,
+                      sourceRunId: handoff.sourceRunId,
+                      correctiveRunId: handoff.correctiveRunId,
+                      resolvedByStatus: updated.status,
+                    },
+                  });
+                })
+                .catch((err) => {
+                  logger.warn({ err, issueId: updated.id }, "failed to log successful run handoff resolution");
+                });
+            }
+          }
+        }
+      } catch (err) {
+        // The comment is already committed with visible side effects, so a
+        // failed transition surfaces as a warning instead of failing the write.
+        const httpError = err instanceof HttpError ? err : null;
+        if (!httpError) {
+          logger.warn({ err, issueId: id }, "disposition comment transition failed unexpectedly");
+        }
+        dispositionResult = {
+          applied: false,
+          warning: {
+            code: "transition_rejected",
+            message: httpError?.message ?? "Disposition transition rejected",
+            details: httpError?.details,
+          },
+        };
+      }
+    }
+
     await issueReferencesSvc.syncComment(comment.id);
     await externalObjectsSvc.syncCommentSafely(comment.id);
     const commentReferenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(currentIssue.id);
@@ -10086,7 +10283,7 @@ export function issueRoutes(
       issue: currentIssue,
       trigger: "comment",
       actor,
-      statusChanged: reopened || scheduledRetrySupersededByComment,
+      statusChanged: reopened || scheduledRetrySupersededByComment || dispositionApplied,
       resumeRequested: resumeRequested === true,
       reopened,
       blockedToTodoRecovery: reopened && reopenFromStatus === "blocked" && currentIssue.status === "todo",
@@ -10327,7 +10524,7 @@ export function issueRoutes(
     })();
 
     await queueTaskWatchdogEvaluation(currentIssue, actor.runId);
-    res.status(201).json(comment);
+    res.status(201).json(dispositionResult ? { ...comment, disposition: dispositionResult } : comment);
   });
 
   router.post("/issues/:id/feedback-votes", validate(upsertIssueFeedbackVoteSchema), async (req, res) => {
