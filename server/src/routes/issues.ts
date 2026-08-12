@@ -131,7 +131,14 @@ import {
 import type { TaskWatchdogServiceDeps, taskWatchdogService } from "../services/task-watchdogs.js";
 import { logger } from "../middleware/logger.js";
 import { conflict, forbidden, HttpError, notFound, unauthorized, unprocessable } from "../errors.js";
-import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
+import {
+  assertBoard,
+  assertCompanyAccess,
+  getAccessibleResource,
+  getActorInfo,
+  respondAuthzDenial,
+  respondForbidden,
+} from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
   collectIssueWorkspaceCommandPaths,
@@ -3416,7 +3423,7 @@ export function issueRoutes(
   async function assertIssueReadAllowed(req: Request, res: Response, issue: Parameters<typeof decideIssueAccess>[1]) {
     const decision = await decideIssueAccess(req, issue, "issue:read");
     if (decision.allowed) return true;
-    res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
+    respondForbidden(res, "issue_read_denied", "Issue is outside this actor's authorization boundary");
     return false;
   }
 
@@ -3452,7 +3459,7 @@ export function issueRoutes(
     if (req.actor.type !== "agent") return true;
     const actorAgentId = req.actor.agentId;
     if (!actorAgentId) {
-      res.status(403).json({ error: "Agent authentication required" });
+      respondForbidden(res, "agent_authentication_required", "Agent authentication required");
       return false;
     }
     const watchdogScope = await resolveTaskWatchdogMutationScope(db, req.actor);
@@ -3472,7 +3479,7 @@ export function issueRoutes(
     }
     const boundaryDecision = await decideIssueAccess(req, issue, "issue:comment");
     if (!boundaryDecision.allowed) {
-      res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
+      respondForbidden(res, "issue_authorization_boundary", "Issue is outside this actor's authorization boundary");
       return false;
     }
     return boundaryDecision;
@@ -3538,7 +3545,7 @@ export function issueRoutes(
     if (req.actor.type !== "agent") return true;
     const actorAgentId = req.actor.agentId;
     if (!actorAgentId) {
-      res.status(403).json({ error: "Agent authentication required" });
+      respondForbidden(res, "agent_authentication_required", "Agent authentication required");
       return false;
     }
     // Task-watchdog runs receive a scoped *grant* to mutate issues inside the
@@ -3566,7 +3573,7 @@ export function issueRoutes(
     }
     const boundaryDecision = await decideIssueAccess(req, issue, "issue:mutate");
     if (!boundaryDecision.allowed) {
-      res.status(403).json({ error: "Issue is outside this actor's authorization boundary" });
+      respondForbidden(res, "issue_authorization_boundary", "Issue is outside this actor's authorization boundary");
       return false;
     }
     if (issue.assigneeAgentId === null) {
@@ -3577,25 +3584,30 @@ export function issueRoutes(
         return true;
       }
       if (issue.status === "in_progress") {
-        res.status(409).json({
-          error: "Issue is checked out by another agent",
-          details: {
+        respondAuthzDenial(
+          res,
+          409,
+          "issue_checked_out_by_another_agent",
+          "Issue is checked out by another agent",
+          {
             issueId: issue.id,
             assigneeAgentId: issue.assigneeAgentId,
             actorAgentId,
           },
-        });
+        );
       } else if (!options.allowVisibleIssueWrite) {
-        res.status(403).json({
-          error: "Agent cannot mutate another agent's issue",
-          details: {
+        respondForbidden(
+          res,
+          "agent_cannot_mutate_other_agents_issue",
+          "Agent cannot mutate another agent's issue",
+          {
             issueId: issue.id,
             assigneeAgentId: issue.assigneeAgentId,
             actorAgentId,
             status: issue.status,
             securityPrinciples: ["Least Privilege", "Complete Mediation", "Fail Securely"],
           },
-        });
+        );
       }
       return issue.status !== "in_progress" && options.allowVisibleIssueWrite === true;
     }
@@ -4102,12 +4114,14 @@ export function issueRoutes(
     const hasStructuredFields = input.presentation !== undefined || input.metadata !== undefined;
     if (!hasStructuredFields) return true;
     if (req.actor.type === "board") return true;
-    res.status(403).json({
-      error: "Only board users may set structured comment presentation or metadata",
-      details: {
+    respondForbidden(
+      res,
+      "structured_comment_fields_board_only",
+      "Only board users may set structured comment presentation or metadata",
+      {
         securityPrinciples: ["Least Privilege", "Secure Defaults", "Complete Mediation"],
       },
-    });
+    );
     return false;
   }
 
@@ -4207,7 +4221,7 @@ export function issueRoutes(
 
     const actorAgentId = req.actor.agentId;
     if (!actorAgentId) {
-      res.status(403).json({ error: "Agent authentication required" });
+      respondForbidden(res, "agent_authentication_required", "Agent authentication required");
       return false;
     }
     if (issue.assigneeAgentId === actorAgentId) return true;
@@ -4225,9 +4239,11 @@ export function issueRoutes(
       return true;
     }
 
-    res.status(403).json({
-      error: "Agent cannot resolve another owner's recovery action",
-      details: {
+    respondForbidden(
+      res,
+      "recovery_action_owner_mismatch",
+      "Agent cannot resolve another owner's recovery action",
+      {
         issueId: issue.id,
         recoveryActionId: activeRecoveryAction.id,
         actorAgentId,
@@ -4236,7 +4252,7 @@ export function issueRoutes(
         source: input.source,
         securityPrinciples: ["Least Privilege", "Complete Mediation", "Secure Defaults"],
       },
-    });
+    );
     return false;
   }
 
