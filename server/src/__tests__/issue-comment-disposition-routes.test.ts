@@ -1,9 +1,12 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// Mocked via the vi.mock("@paperclipai/shared/telemetry") factory below.
+import { trackAgentTaskCompleted } from "@paperclipai/shared/telemetry";
 
 const ISSUE_ID = "11111111-1111-4111-8111-111111111111";
 const ASSIGNEE_AGENT_ID = "22222222-2222-4222-8222-222222222222";
+const OTHER_AGENT_ID = "33333333-3333-4333-8333-333333333333";
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -76,6 +79,7 @@ const mockIssueThreadInteractionService = vi.hoisted(() => ({
   listForIssue: vi.fn(async () => []),
   expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
   expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
+  expirePendingInteractionsForTerminalIssue: vi.fn(async () => []),
 }));
 const mockIssueApprovalService = vi.hoisted(() => ({
   listApprovalsForIssue: vi.fn(async () => []),
@@ -91,6 +95,10 @@ const mockExternalObjectService = vi.hoisted(() => ({
   syncCommentSafely: vi.fn(async () => undefined),
   syncIssueSafely: vi.fn(async () => undefined),
 }));
+const mockCompanySkillService = vi.hoisted(() => ({
+  completeTestRunForIssue: vi.fn(async () => null),
+}));
+const mockObserveCrossIssueInfluence = vi.hoisted(() => vi.fn());
 
 vi.mock("@paperclipai/shared/telemetry", () => ({
   trackAgentTaskCompleted: vi.fn(),
@@ -139,9 +147,7 @@ vi.mock("../services/index.js", () => ({
   }),
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
-  companySkillService: () => ({
-    completeTestRunForIssue: vi.fn(async () => null),
-  }),
+  companySkillService: () => mockCompanySkillService,
   documentAnnotationService: () => ({ remapOpenThreadsForDocument: async () => [] }),
   documentService: () => ({}),
   executionWorkspaceService: () => ({}),
@@ -175,6 +181,15 @@ vi.mock("../services/index.js", () => ({
 
 vi.mock("../services/external-objects.js", () => ({
   externalObjectService: () => mockExternalObjectService,
+}));
+
+vi.mock("../services/cross-issue-influence-limit.js", () => ({
+  observeCrossIssueInfluence: mockObserveCrossIssueInfluence,
+  crossIssueInfluenceLimitError: vi.fn((decision: { count: number; cap: number }) => ({
+    error: `Cross-issue influence cap exceeded: this run is limited to ${decision.cap} cross-issue comments or updates`,
+    details: { code: "cross_issue_influence_cap_exceeded", count: decision.count, cap: decision.cap },
+  })),
+  crossIssueInfluenceRunContextError: vi.fn(() => new Error("cross-issue run context required")),
 }));
 
 function createApp() {
@@ -262,6 +277,13 @@ describe.sequential("issue comment disposition routes", () => {
     mockHeartbeatService.cancelRun.mockResolvedValue(null);
     mockExternalObjectService.syncCommentSafely.mockResolvedValue(undefined);
     mockExternalObjectService.syncIssueSafely.mockResolvedValue(undefined);
+    mockObserveCrossIssueInfluence.mockResolvedValue({
+      allowed: true,
+      mode: "log_only",
+      count: 1,
+      cap: 20,
+      enforceAt: "2026-08-11T00:00:00.000Z",
+    });
     mockLogActivity.mockResolvedValue(undefined);
     mockFeedbackService.listIssueVotesForUser.mockResolvedValue([]);
     mockInstanceSettingsService.get.mockResolvedValue({
@@ -315,6 +337,7 @@ describe.sequential("issue comment disposition routes", () => {
     });
     mockAgentService.getById.mockResolvedValue(null);
     mockAgentService.list.mockResolvedValue([]);
+    mockCompanySkillService.completeTestRunForIssue.mockResolvedValue(null);
   });
 
   it("maps disposition:done on an in_progress issue to the handoff-resolving status transition", async () => {
@@ -331,7 +354,7 @@ describe.sequential("issue comment disposition routes", () => {
       .post(`/api/issues/${ISSUE_ID}/comments`)
       .send({ body: "Scope complete.", disposition: "done" });
 
-    expect(res.status).toBe(201);
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body.disposition).toEqual({ applied: true, status: "done" });
     expect(mockIssueService.update).toHaveBeenCalledWith(
       ISSUE_ID,
@@ -422,6 +445,212 @@ describe.sequential("issue comment disposition routes", () => {
     expect(mockLogActivity).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ action: "issue.successful_run_handoff_resolved" }),
+    );
+  });
+
+  it("cancels the issue's active run on disposition:cancelled, mirroring the PATCH cancelled-status path", async () => {
+    const issue = makeIssue("in_progress");
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...issue,
+      ...patch,
+      updatedAt: new Date(),
+    }));
+    mockHeartbeatService.getActiveRunForAgent.mockResolvedValue({
+      id: "run-active-1",
+      status: "running",
+      companyId: "company-1",
+      agentId: ASSIGNEE_AGENT_ID,
+      contextSnapshot: { issueId: ISSUE_ID },
+    });
+    mockHeartbeatService.cancelRun.mockResolvedValue({
+      id: "run-active-1",
+      companyId: "company-1",
+      agentId: ASSIGNEE_AGENT_ID,
+    });
+
+    const res = await request(await installActor(createApp(), agentActor()))
+      .post(`/api/issues/${ISSUE_ID}/comments`)
+      .send({ body: "Out of scope for this run.", disposition: "cancelled" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.disposition).toEqual({ applied: true, status: "cancelled" });
+    expect(mockIssueService.update).toHaveBeenCalledWith(
+      ISSUE_ID,
+      expect.objectContaining({ status: "cancelled" }),
+    );
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-active-1");
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "heartbeat.cancelled",
+        entityType: "heartbeat_run",
+        entityId: "run-active-1",
+        issueId: ISSUE_ID,
+        details: expect.objectContaining({
+          agentId: ASSIGNEE_AGENT_ID,
+          source: "issue_status_cancelled",
+          issueId: ISSUE_ID,
+        }),
+      }),
+    );
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "issue.updated",
+        entityId: ISSUE_ID,
+        details: expect.objectContaining({
+          status: "cancelled",
+          source: "disposition_comment",
+          disposition: "cancelled",
+          cancelledStatusRunId: "run-active-1",
+        }),
+      }),
+    );
+  });
+
+  it("syncs routine run status for the issue after a successful disposition transition", async () => {
+    const issue = makeIssue("in_progress");
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...issue,
+      ...patch,
+      updatedAt: new Date(),
+    }));
+
+    const res = await request(await installActor(createApp(), agentActor()))
+      .post(`/api/issues/${ISSUE_ID}/comments`)
+      .send({ body: "Scope complete.", disposition: "done" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.disposition).toEqual({ applied: true, status: "done" });
+    expect(mockRoutineService.syncRunStatusForIssue).toHaveBeenCalledWith(ISSUE_ID);
+  });
+
+  it("does not sync routine run status when the disposition transition is rejected", async () => {
+    // Same rejected in_review disposition as the warning test above: the
+    // comment posts, but no update ran, so no routine sync may fire.
+    const issue = makeIssue("in_progress");
+    mockIssueService.getById.mockResolvedValue(issue);
+
+    const res = await request(await installActor(createApp(), agentActor()))
+      .post(`/api/issues/${ISSUE_ID}/comments`)
+      .send({ body: "Please review.", disposition: "in_review" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.disposition).toEqual({
+      applied: false,
+      warning: expect.objectContaining({ code: "transition_rejected" }),
+    });
+    expect(mockRoutineService.syncRunStatusForIssue).not.toHaveBeenCalled();
+  });
+
+  it("finalizes the skill-test run when a disposition lands a terminal status on a skill_test issue", async () => {
+    const issue = { ...makeIssue("in_progress"), harnessKind: "skill_test" };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...issue,
+      ...patch,
+      updatedAt: new Date(),
+    }));
+    mockCompanySkillService.completeTestRunForIssue.mockResolvedValue({
+      id: "skill-test-run-1",
+      status: "succeeded",
+      outputDocumentKey: "skill-test-output-1",
+    });
+
+    const res = await request(await installActor(createApp(), agentActor()))
+      .post(`/api/issues/${ISSUE_ID}/comments`)
+      .send({ body: "Scope complete.", disposition: "done" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.disposition).toEqual({ applied: true, status: "done" });
+    expect(mockCompanySkillService.completeTestRunForIssue).toHaveBeenCalledWith({
+      companyId: "company-1",
+      issueId: ISSUE_ID,
+      outcome: "succeeded",
+      error: null,
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "company.skill_test_run_completed",
+        entityType: "company_skill_test_run",
+        entityId: "skill-test-run-1",
+        issueId: ISSUE_ID,
+        details: expect.objectContaining({
+          issueId: ISSUE_ID,
+          status: "succeeded",
+          outputDocumentKey: "skill-test-output-1",
+        }),
+      }),
+    );
+  });
+
+  it("tracks agent task completion telemetry when a disposition lands done", async () => {
+    const issue = makeIssue("in_progress");
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...issue,
+      ...patch,
+      updatedAt: new Date(),
+    }));
+    mockAgentService.getById.mockResolvedValue({
+      id: ASSIGNEE_AGENT_ID,
+      role: "engineer",
+      adapterType: "claude_code",
+      adapterConfig: { model: "test-model-1" },
+    });
+
+    const res = await request(await installActor(createApp(), agentActor()))
+      .post(`/api/issues/${ISSUE_ID}/comments`)
+      .send({ body: "Scope complete.", disposition: "done" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.disposition).toEqual({ applied: true, status: "done" });
+    expect(trackAgentTaskCompleted).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        agentRole: "engineer",
+        agentId: ASSIGNEE_AGENT_ID,
+        adapterType: "claude_code",
+        model: "test-model-1",
+      },
+    );
+  });
+
+  it("captures the authz gate denial as a machine-readable warning without mutating the issue", async () => {
+    // A standard-trust agent that is neither the assignee nor a recovery-action
+    // owner: the mutation gate denies through the shared issue-write denial
+    // copy (run-lock, 409) via the capture shim; the comment still posts and
+    // the issue stays put. The stable code travels inside `details.code`.
+    const issue = makeIssue("in_progress");
+    mockIssueService.getById.mockResolvedValue(issue);
+
+    const res = await request(await installActor(createApp(), agentActor(OTHER_AGENT_ID)))
+      .post(`/api/issues/${ISSUE_ID}/comments`)
+      .send({ body: "Looks done to me.", disposition: "done" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe("comment-1");
+    expect(res.body.disposition).toEqual({
+      applied: false,
+      warning: expect.objectContaining({
+        code: "transition_rejected",
+        message: expect.stringContaining("Another agent's run owns this task"),
+        details: expect.objectContaining({
+          code: "issue_write_assignee_run_lock",
+          issueId: ISSUE_ID,
+          assigneeAgentId: ASSIGNEE_AGENT_ID,
+          actorAgentId: OTHER_AGENT_ID,
+        }),
+      }),
+    });
+    // The issue's stored status was never touched: no update reached the DB.
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "issue.updated" }),
     );
   });
 

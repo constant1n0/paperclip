@@ -249,6 +249,19 @@ export const ISSUE_COMMENT_DISPOSITION_STATUSES = [
 ] as const;
 export type IssueCommentDispositionStatus = (typeof ISSUE_COMMENT_DISPOSITION_STATUSES)[number];
 
+// Response-side warning codes for a structured disposition comment whose
+// status transition did not run. Stable machine-readable envelope codes:
+// - issue_not_in_progress: disposition ignored because the issue was not
+//   in_progress when the comment posted.
+// - transition_rejected: the PATCH-equivalent transition was denied by an
+//   authorization gate or failed validation; the comment still posted.
+export const ISSUE_COMMENT_DISPOSITION_WARNING_CODES = [
+  "issue_not_in_progress",
+  "transition_rejected",
+] as const;
+export type IssueCommentDispositionWarningCode =
+  (typeof ISSUE_COMMENT_DISPOSITION_WARNING_CODES)[number];
+
 export const ISSUE_COMMENT_PRESENTATION_KINDS = ["message", "system_notice"] as const;
 export type IssueCommentPresentationKind = (typeof ISSUE_COMMENT_PRESENTATION_KINDS)[number];
 

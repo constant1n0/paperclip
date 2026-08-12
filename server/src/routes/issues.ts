@@ -89,10 +89,12 @@ import {
   type IssueWakeDiagnosticWakeFailureClass,
   type IssueWakeDiagnosticWakeRequest,
   type IssueWakeDiagnosticsResponse,
+  type IssueCommentDispositionResult,
   type IssueCommentDispositionStatus,
   type IssueRelationIssueSummary,
   type IssueReviewPolicy,
   type IssueCommentPresentation,
+  type IssueStatus,
   type IssueWatchdogDiscoveryKind,
   type ProjectWorkspace,
   type SourceTrustMetadata,
@@ -11424,16 +11426,20 @@ export function issueRoutes(
     // recovery card is only cleared by a status transition out of in_progress,
     // which historically required a separate PATCH that agents never issue —
     // they re-comment instead and the heartbeat re-files the card. When the
-    // comment carries a `disposition` and the issue is in_progress, apply the
-    // same status-transition path the PATCH route uses (same mutation and
-    // recovery-authority gates, same update service, same successful-run
-    // handoff resolution logging) so every existing clearing path fires
-    // unchanged. The comment is already committed above, so a rejected
+    // comment carries a `disposition` and the issue is in_progress, this block
+    // deliberately mirrors the PATCH /issues/:id transition path piece by
+    // piece — verify any change here against that handler. Mirrored pieces:
+    //   - assertAgentIssueMutationAllowed + assertRecoveryActionAuthority gates
+    //   - applyIssueExecutionPolicyTransition + execution-decision insert
+    //   - active-run cancellation when the transition lands `cancelled`
+    //   - routinesSvc.syncRunStatusForIssue after the committed update
+    //   - `issue.updated` activity + successful-run handoff resolution logging
+    //   - agent-task-completed telemetry when the transition lands `done`
+    //   - skill-test run finalization on terminal skill_test dispositions
+    // `disposition` is an agent-facing capability with no UI surface by design
+    // (upstream #7682). The comment is already committed above, so a rejected
     // transition must degrade to a machine-readable warning — never a 500.
-    let dispositionResult:
-      | { applied: true; status: string }
-      | { applied: false; warning: { code: string; message: string; issueStatus?: string; details?: unknown } }
-      | null = null;
+    let dispositionResult: IssueCommentDispositionResult | null = null;
     let dispositionApplied = false;
     const requestedDisposition = req.body.disposition as IssueCommentDispositionStatus | undefined;
     if (requestedDisposition && currentIssue.status !== "in_progress") {
@@ -11442,16 +11448,21 @@ export function issueRoutes(
         warning: {
           code: "issue_not_in_progress",
           message: `Disposition comments only transition in_progress issues; this issue is ${currentIssue.status}.`,
-          issueStatus: currentIssue.status,
+          issueStatus: currentIssue.status as IssueStatus,
         },
       };
     } else if (requestedDisposition) {
       // The shared mutation gates respond through `res` on denial; capture the
       // denial instead of sending it because the committed comment must still
-      // return a 201 with a warning.
+      // return a 201 with a warning. The gates deny via respondAuthzDenial,
+      // which chains `res.status(...).type(...).json(...)`, so every method in
+      // that chain must exist here and return `this`.
       const gateCapture: { body: unknown } = { body: null };
       const gateRes = {
         status() {
+          return this;
+        },
+        type() {
           return this;
         },
         json(body: unknown) {
@@ -11461,6 +11472,9 @@ export function issueRoutes(
       } as unknown as Response;
       try {
         const issueBeforeDisposition = currentIssue;
+        // Known side effect: on the self-assignee in_progress branch this gate
+        // adopts a stale checkout and logs `issue.checkout_lock_adopted`
+        // (svc.assertCheckoutOwner) — the coupling is intentional, same as PATCH.
         const mutationAllowed = await assertAgentIssueMutationAllowed(req, gateRes, issueBeforeDisposition, {
           allowVisibleIssueWrite: true,
         });
@@ -11473,16 +11487,25 @@ export function issueRoutes(
             source: "issue_update",
           }));
         if (!mutationAllowed || !recoveryAuthorityAllowed) {
-          const captured = gateCapture.body as { error?: unknown; details?: unknown } | null;
+          const captured = gateCapture.body as { error?: unknown; code?: unknown; details?: unknown } | null;
           dispositionResult = {
             applied: false,
             warning: {
               code: "transition_rejected",
               message: typeof captured?.error === "string" ? captured.error : "Disposition transition rejected",
+              ...(typeof captured?.code === "string" ? { gateCode: captured.code } : {}),
               details: captured?.details,
             },
           };
         } else {
+          // Mirror PATCH /issues/:id (shouldCancelActiveRunForCancelledStatus):
+          // resolve the active run before the update so a disposition into
+          // `cancelled` can cancel it afterwards. PATCH also requires the
+          // existing status !== "cancelled"; that conjunct is implicit here
+          // because this block only runs for in_progress issues.
+          const runToCancelForCancelledDisposition = requestedDisposition === "cancelled"
+            ? await resolveActiveIssueRun(issueBeforeDisposition)
+            : null;
           const transition = applyIssueExecutionPolicyTransition({
             issue: issueBeforeDisposition,
             policy: normalizeIssueExecutionPolicy(issueBeforeDisposition.executionPolicy ?? null),
@@ -11547,7 +11570,54 @@ export function issueRoutes(
           } else {
             currentIssue = updated;
             dispositionApplied = issueBeforeDisposition.status !== updated.status;
-            dispositionResult = { applied: true, status: updated.status };
+            dispositionResult = { applied: true, status: updated.status as IssueStatus };
+
+            // Mirror PATCH /issues/:id: a transition into `cancelled` cancels
+            // the issue's active run and logs the same heartbeat activity.
+            let cancelledStatusRunId: string | null = null;
+            if (runToCancelForCancelledDisposition) {
+              try {
+                const cancelled = await heartbeat.cancelRun(runToCancelForCancelledDisposition.id);
+                if (cancelled) {
+                  cancelledStatusRunId = cancelled.id;
+                  await logActivity(db, {
+                    companyId: cancelled.companyId,
+                    actorType: actor.actorType,
+                    actorId: actor.actorId,
+                    agentId: actor.agentId,
+                    runId: actor.runId,
+                    agentApiKeyId: actor.agentApiKeyId,
+                    action: "heartbeat.cancelled",
+                    entityType: "heartbeat_run",
+                    entityId: cancelled.id,
+                    issueId: updated.id,
+                    details: { agentId: cancelled.agentId, source: "issue_status_cancelled", issueId: updated.id },
+                  });
+                }
+              } catch (err) {
+                logger.warn(
+                  { err, issueId: updated.id, runId: runToCancelForCancelledDisposition.id },
+                  "failed to cancel run for cancelled issue",
+                );
+                await logActivity(db, {
+                  companyId: updated.companyId,
+                  actorType: actor.actorType,
+                  actorId: actor.actorId,
+                  agentId: actor.agentId,
+                  runId: actor.runId,
+                  agentApiKeyId: actor.agentApiKeyId,
+                  action: "heartbeat.cancel_failed",
+                  entityType: "heartbeat_run",
+                  entityId: runToCancelForCancelledDisposition.id,
+                  issueId: updated.id,
+                  details: { source: "issue_status_cancelled", issueId: updated.id },
+                });
+              }
+            }
+
+            // Mirror PATCH /issues/:id: resync routine run status after any
+            // committed issue update.
+            await routinesSvc.syncRunStatusForIssue(updated.id);
 
             await logActivity(db, {
               companyId: updated.companyId,
@@ -11565,6 +11635,7 @@ export function issueRoutes(
                 source: "disposition_comment",
                 disposition: requestedDisposition,
                 commentId: comment.id,
+                ...(cancelledStatusRunId ? { cancelledStatusRunId } : {}),
                 _previous: { status: issueBeforeDisposition.status },
               },
             });
@@ -11595,6 +11666,60 @@ export function issueRoutes(
                 .catch((err) => {
                   logger.warn({ err, issueId: updated.id }, "failed to log successful run handoff resolution");
                 });
+            }
+
+            // Mirror PATCH /issues/:id: completing an issue emits the
+            // agent-task-completed telemetry event.
+            if (updated.status === "done" && issueBeforeDisposition.status !== "done") {
+              const tc = getTelemetryClient();
+              if (tc && actor.agentId) {
+                const actorAgent = await agentsSvc.getById(actor.agentId);
+                if (actorAgent) {
+                  const model = typeof actorAgent.adapterConfig?.model === "string"
+                    ? actorAgent.adapterConfig.model
+                    : undefined;
+                  trackAgentTaskCompleted(tc, {
+                    agentRole: actorAgent.role,
+                    agentId: actorAgent.id,
+                    adapterType: actorAgent.adapterType,
+                    model,
+                  });
+                }
+              }
+            }
+
+            // Mirror PATCH /issues/:id: a terminal transition on a skill_test
+            // harness issue finalizes its company skill test run.
+            if (
+              updated.harnessKind === "skill_test" &&
+              issueBeforeDisposition.status !== updated.status &&
+              (updated.status === "done" || updated.status === "cancelled")
+            ) {
+              const completedRun = await companySkillsSvc.completeTestRunForIssue({
+                companyId: updated.companyId,
+                issueId: updated.id,
+                outcome: updated.status === "done" ? "succeeded" : "cancelled",
+                error: updated.status === "cancelled" ? "Harness issue was cancelled" : null,
+              });
+              if (completedRun) {
+                await logActivity(db, {
+                  companyId: updated.companyId,
+                  actorType: actor.actorType,
+                  actorId: actor.actorId,
+                  agentId: actor.agentId,
+                  runId: actor.runId,
+                  agentApiKeyId: actor.agentApiKeyId,
+                  action: "company.skill_test_run_completed",
+                  entityType: "company_skill_test_run",
+                  entityId: completedRun.id,
+                  issueId: updated.id,
+                  details: {
+                    issueId: updated.id,
+                    status: completedRun.status,
+                    outputDocumentKey: completedRun.outputDocumentKey,
+                  },
+                });
+              }
             }
           }
         }
