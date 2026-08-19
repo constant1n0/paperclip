@@ -721,13 +721,26 @@ export function agentRoutes(
 
   function buildLowTrustSelfView(agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>) {
     return {
+      ...buildRestrictedSelfIdentity(agent),
+      trustPreset: LOW_TRUST_REVIEW_PRESET,
+    };
+  }
+
+  function buildRestrictedSelfIdentity(agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>) {
+    return {
       id: agent.id,
       companyId: agent.companyId,
       name: agent.name,
       role: agent.role,
       title: agent.title,
       status: agent.status,
-      trustPreset: LOW_TRUST_REVIEW_PRESET,
+    };
+  }
+
+  function buildStandardSelfView(agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>) {
+    return {
+      ...buildRestrictedSelfIdentity(agent),
+      urlKey: agent.urlKey,
     };
   }
 
@@ -2106,17 +2119,12 @@ export function agentRoutes(
     }
     if (req.actor.keyScope?.kind === "task_bridge") {
       res.json({
-        id: agent.id,
-        companyId: agent.companyId,
-        name: agent.name,
-        role: agent.role,
-        title: agent.title,
-        status: agent.status,
+        ...buildRestrictedSelfIdentity(agent),
         keyScope: req.actor.keyScope,
       });
       return;
     }
-    res.json(await buildAgentDetail(agent));
+    res.json(buildStandardSelfView(agent));
   });
 
   router.get("/agents/me/inbox-lite", async (req, res) => {

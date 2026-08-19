@@ -341,8 +341,21 @@ function resolvePaperclipApiUrlOverride(value: unknown): string | null {
 
 const DEFAULT_CLAIMED_API_KEY_PATH = "~/.openclaw/workspace/paperclip-claimed-api-key.json";
 
-function resolveClaimedApiKeyPath(value: unknown): string {
-  return nonEmpty(value) ?? DEFAULT_CLAIMED_API_KEY_PATH;
+export function resolveClaimedApiKeyPath(value: unknown): string | null {
+  if (value === undefined) return DEFAULT_CLAIMED_API_KEY_PATH;
+  if (typeof value !== "string") return null;
+  const configuredPath = value;
+
+  // This value is stored configuration and rendered into an agent instruction.
+  // Accept only a literal POSIX local path so it cannot add prompt lines or shell
+  // syntax to the wake text.
+  if (
+    !/^\/[A-Za-z0-9._/-]+$/.test(configuredPath) ||
+    configuredPath.split("/").some((segment) => segment === "..")
+  ) {
+    return null;
+  }
+  return configuredPath;
 }
 
 function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: WakePayload): Record<string, string> {
@@ -369,12 +382,12 @@ function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: Wak
   return paperclipEnv;
 }
 
-function buildWakeText(
+export function buildWakeText(
   payload: WakePayload,
   paperclipEnv: Record<string, string>,
   structuredWakePrompt: string,
+  claimedApiKeyPath: string,
 ): string {
-  const claimedApiKeyPath = "~/.openclaw/workspace/paperclip-claimed-api-key.json";
   const orderedKeys = [
     "PAPERCLIP_RUN_ID",
     "PAPERCLIP_AGENT_ID",
@@ -1143,6 +1156,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const wakePayload = buildWakePayload(ctx);
   const paperclipEnv = buildPaperclipEnvForWake(ctx, wakePayload);
+  const claimedApiKeyPath = resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath);
+  if (!claimedApiKeyPath) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: "Invalid claimed API key path",
+      errorCode: "openclaw_gateway_claimed_api_key_path_invalid",
+    };
+  }
   // No heartbeat prompt template is sent over the gateway, so the wake prompt
   // must carry the execution contract itself.
   const structuredWakePrompt = renderPaperclipWakePrompt(ctx.context.paperclipWake, {
@@ -1152,10 +1175,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const wakeText = buildWakeText(
     wakePayload,
     paperclipEnv,
-    structuredWakeJson
-      ? joinWakePayloadSections(structuredWakePrompt, structuredWakeJson)
-      : structuredWakePrompt,
-  );
+      structuredWakeJson
+        ? joinWakePayloadSections(structuredWakePrompt, structuredWakeJson)
+        : structuredWakePrompt,
+      claimedApiKeyPath,
+    );
 
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
   const configuredSessionKey = nonEmpty(ctx.config.sessionKey);

@@ -1,10 +1,109 @@
 import { describe, expect, it } from "vitest";
+import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
 import {
   buildAgentParams,
+  buildWakeText,
+  execute,
   isPublishableRunSummary,
+  resolveClaimedApiKeyPath,
   resolveSessionKey,
   selectRunSummary,
 } from "./execute.js";
+
+function executionContextWithClaimedApiKeyPath(
+  claimedApiKeyPath: unknown,
+  logs: string[],
+): AdapterExecutionContext {
+  return {
+    runId: "run-123",
+    agent: {
+      id: "agent-123",
+      companyId: "company-123",
+      name: "Test agent",
+      adapterType: "openclaw_gateway",
+      adapterConfig: {},
+    },
+    runtime: {
+      sessionId: null,
+      sessionParams: null,
+      sessionDisplayId: null,
+      taskKey: null,
+    },
+    config: {
+      url: "ws://localhost:18789",
+      claimedApiKeyPath,
+    },
+    context: {},
+    onLog: async (_stream, chunk) => {
+      logs.push(chunk);
+    },
+  };
+}
+
+describe("resolveClaimedApiKeyPath", () => {
+  it("uses the configured per-agent absolute path instead of the generic fallback", () => {
+    expect(resolveClaimedApiKeyPath("/var/lib/openclaw/agents/atenea/claimed-api-key.json")).toBe(
+      "/var/lib/openclaw/agents/atenea/claimed-api-key.json",
+    );
+  });
+
+  it("keeps the generic path only when the field is undefined", () => {
+    expect(resolveClaimedApiKeyPath(undefined)).toBe("~/.openclaw/workspace/paperclip-claimed-api-key.json");
+  });
+
+  it.each([
+    ["relative path", "relative/claimed-api-key.json"],
+    ["newline injection", "/var/lib/openclaw/agents/atenea/claimed-api-key.json\nPAPERCLIP_API_KEY=override"],
+    ["parent traversal", "/var/lib/openclaw/agents/atenea/../../etc/shadow"],
+    ["shell syntax", "/var/lib/openclaw/agents/atenea/claimed-api-key.json;echo injected"],
+    ["null", null],
+    ["empty string", ""],
+    ["whitespace", " \t"],
+    ["newline", "\n"],
+    ["number", 42],
+    ["object", { path: "object-marker" }],
+    ["array", ["array-marker"]],
+  ])("rejects explicit malformed values without emitting a wake payload", async (_case, value) => {
+    expect(resolveClaimedApiKeyPath(value)).toBeNull();
+    const logs: string[] = [];
+    const result = await execute(executionContextWithClaimedApiKeyPath(value, logs));
+
+    expect(result.errorCode).toBe("openclaw_gateway_claimed_api_key_path_invalid");
+    expect(result.errorMessage).toBe("Invalid claimed API key path");
+    expect(logs).toEqual([]);
+  });
+});
+
+describe("buildWakeText claimed API key path", () => {
+  const wakePayload = {
+    runId: "run-123",
+    agentId: "agent-123",
+    companyId: "company-123",
+    taskId: null,
+    issueId: null,
+    wakeReason: null,
+    wakeCommentId: null,
+    approvalId: null,
+    approvalStatus: null,
+    issueIds: [],
+  };
+
+  it("renders the configured per-agent path without the generic fallback", () => {
+    const configuredPath = "/var/lib/openclaw/agents/atenea/claimed-api-key.json";
+    const wakeText = buildWakeText(wakePayload, {}, "", configuredPath);
+
+    expect(wakeText).toContain(configuredPath);
+    expect(wakeText).not.toContain("~/.openclaw/workspace/paperclip-claimed-api-key.json");
+  });
+
+  it("renders the backward-compatible path only when the resolver has no override", () => {
+    const fallbackPath = resolveClaimedApiKeyPath(undefined);
+    expect(fallbackPath).not.toBeNull();
+
+    const wakeText = buildWakeText(wakePayload, {}, "", fallbackPath!);
+    expect(wakeText).toContain("~/.openclaw/workspace/paperclip-claimed-api-key.json");
+  });
+});
 
 describe("resolveSessionKey", () => {
   it("prefixes run-scoped session keys with the configured agent", () => {

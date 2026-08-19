@@ -799,7 +799,7 @@ describeEmbeddedPostgres("low-trust red-team HTTP route regression suite", () =>
     expect(res.body.error).toBe("Low-trust boundary root issue scopes do not overlap.");
   });
 
-  it("restricts low-trust self inspection without changing standard-agent visibility", async () => {
+  it("returns allowlisted self views for standard, task-bridge, and low-trust agents", async () => {
     const fixture = await seedLowTrustFixture(db);
     await db.insert(companyMemberships).values({
       companyId: fixture.company.id,
@@ -827,9 +827,13 @@ describeEmbeddedPostgres("low-trust red-team HTTP route regression suite", () =>
 
     const lowTrustRes = await request(createApp(db, agentActor(fixture))).get("/api/agents/me");
     expect(lowTrustRes.status, JSON.stringify(lowTrustRes.body)).toBe(200);
-    expect(lowTrustRes.body).toMatchObject({
+    expect(lowTrustRes.body).toEqual({
       id: fixture.agents.lowTrust.id,
       companyId: fixture.company.id,
+      name: "Low Trust Reviewer",
+      role: "engineer",
+      title: null,
+      status: "idle",
       trustPreset: LOW_TRUST_REVIEW_PRESET,
     });
     expect(lowTrustRes.body).not.toHaveProperty("adapterConfig");
@@ -865,7 +869,47 @@ describeEmbeddedPostgres("low-trust red-team HTTP route regression suite", () =>
     const standardActor = agentActor(fixture, fixture.agents.standard.id);
     const standardRes = await request(createApp(db, { ...standardActor, runId: null })).get("/api/agents/me");
     expect(standardRes.status, JSON.stringify(standardRes.body)).toBe(200);
-    expect(JSON.stringify(standardRes.body)).toContain(fixture.canaries.agentConfig);
+    expect(standardRes.body).toEqual({
+      id: fixture.agents.standard.id,
+      companyId: fixture.company.id,
+      name: "Standard Engineer",
+      urlKey: standardRes.body.urlKey,
+      role: "engineer",
+      title: null,
+      status: "idle",
+    });
+    expect(typeof standardRes.body.urlKey).toBe("string");
+    expectNoCanary(standardRes.body, fixture.canaries.agentConfig);
+    expect(standardRes.body).not.toHaveProperty("adapterConfig");
+    expect(standardRes.body).not.toHaveProperty("runtimeConfig");
+    expect(standardRes.body).not.toHaveProperty("permissions");
+    expect(standardRes.body).not.toHaveProperty("metadata");
+    expect(standardRes.body).not.toHaveProperty("access");
+    expect(standardRes.body).not.toHaveProperty("chainOfCommand");
+
+    const taskBridgeScope = { kind: "task_bridge" as const, parentIssueId: fixture.issues.assignedReview.id };
+    const taskBridgeRes = await request(createApp(db, {
+      ...standardActor,
+      runId: null,
+      keyScope: taskBridgeScope,
+      source: "agent_key",
+    })).get("/api/agents/me");
+    expect(taskBridgeRes.status, JSON.stringify(taskBridgeRes.body)).toBe(200);
+    expect(taskBridgeRes.body).toEqual({
+      id: fixture.agents.standard.id,
+      companyId: fixture.company.id,
+      name: "Standard Engineer",
+      role: "engineer",
+      title: null,
+      status: "idle",
+      keyScope: taskBridgeScope,
+    });
+    expectNoCanary(taskBridgeRes.body, fixture.canaries.agentConfig);
+    expect(taskBridgeRes.body).not.toHaveProperty("adapterConfig");
+    expect(taskBridgeRes.body).not.toHaveProperty("runtimeConfig");
+    expect(taskBridgeRes.body).not.toHaveProperty("permissions");
+    expect(taskBridgeRes.body).not.toHaveProperty("metadata");
+    expect(taskBridgeRes.body).not.toHaveProperty("access");
 
     const issueScopedLowTrustRes = await request(createApp(db, standardActor)).get("/api/agents/me");
     expect(issueScopedLowTrustRes.status, JSON.stringify(issueScopedLowTrustRes.body)).toBe(200);
