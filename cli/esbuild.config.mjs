@@ -5,6 +5,7 @@
  * External npm packages remain as regular dependencies.
  */
 
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,10 @@ import { bundledCliNpmDependencies } from "../scripts/cli-bundled-npm-dependenci
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
+
+// Embedded provenance for the local-diagnostics bin (C2 sentinels, #5172 §8).
+const cliVersion = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf8")).version;
+const buildCommit = process.env.PC_BUILD_COMMIT ?? execSync("git rev-parse HEAD", { cwd: repoRoot }).toString().trim();
 
 // Workspace packages whose code should be bundled into the CLI.
 // Note: "server" is excluded — it's published separately and resolved at runtime.
@@ -55,13 +60,17 @@ for (const name of externalWorkspacePackages) {
 
 /** @type {import('esbuild').BuildOptions} */
 export default {
-  entryPoints: ["src/index.ts"],
+  entryPoints: { index: "src/index.ts", "local-diagnostics": "src/local-diagnostics/index.ts" },
   bundle: true,
   platform: "node",
   target: "node20",
   format: "esm",
-  outfile: "dist/index.js",
+  outdir: "dist",
   banner: { js: "#!/usr/bin/env node" },
+  define: {
+    __PC_VERSION__: JSON.stringify(cliVersion),
+    __PC_BUILD_COMMIT__: JSON.stringify(buildCommit),
+  },
   external: [...externals].sort(),
   treeShaking: true,
   sourcemap: true,
