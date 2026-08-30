@@ -129,4 +129,36 @@ describe("local-diagnostics dependency boundary", () => {
     ], root);
     expect(findings.map((finding: { reason: string }) => finding.reason)).toEqual(["specifier-not-relative"]);
   });
+
+  it("covers every frozen module-reference form at its candidate expression", async () => {
+    const loaded = await scanner();
+    const root = resolve("/virtual/local-diagnostics");
+    const findings = loaded!.scanSources([{ file: resolve(root, "control.ts"), source: 'import external = require("./missing.js");\nconst identifier = "./missing.js";\nimport(identifier);\nimport(`./missing.js`);\nimport(condition ? "./missing.js" : "./other.js");\nexport * from "./missing.js";\ntype T = import("./missing.js").T;' }], root);
+    expect(findings.map((finding: { line: number; column: number; boundary: string; reason: string; specifier: string | null }) => `${finding.line}:${finding.column}:${finding.boundary}:${finding.reason}:${finding.specifier}`)).toEqual([
+      "1:27:B1:specifier-not-in-product-set:./missing.js",
+      "3:8:B1:nonliteral-module-specifier:null",
+      "4:8:B1:nonliteral-module-specifier:null",
+      "5:8:B1:nonliteral-module-specifier:null",
+      "6:15:B1:specifier-not-in-product-set:./missing.js",
+      "7:17:B1:specifier-not-in-product-set:./missing.js",
+    ]);
+  });
+
+  it("keeps triple-slash directive categories and positions distinct from filenames", async () => {
+    const loaded = await scanner();
+    const root = resolve("/virtual/local-diagnostics");
+    const input = { file: resolve(root, "directives.ts"), source: '/// <reference path="./dependency.ts" />\n/// <reference types="dependency-types" />\n/// <reference lib="esnext" />' };
+    const source = ts.createSourceFile(input.file, input.source, ts.ScriptTarget.Latest, true);
+    const directives = [
+      [source.referencedFiles[0]!, "OOA/triple-slash:referencedFiles"],
+      [source.typeReferenceDirectives[0]!, "OOA/triple-slash:typeReferenceDirectives"],
+      [source.libReferenceDirectives[0]!, "OOA/triple-slash:libReferenceDirectives"],
+    ] as const;
+    const expected = directives.map(([directive, reason]) => {
+      const location = source.getLineAndCharacterOfPosition(directive.pos);
+      return `${location.line + 1}:${location.character + 1}:${reason}:null`;
+    });
+    const findings = loaded!.scanSources([input], root);
+    expect(findings.map((finding: { line: number; column: number; boundary: string; reason: string; specifier: string | null }) => `${finding.line}:${finding.column}:${finding.boundary}/${finding.reason}:${finding.specifier}`)).toEqual(expected);
+  });
 });

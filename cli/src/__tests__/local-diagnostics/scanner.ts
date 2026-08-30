@@ -25,11 +25,19 @@ export function scanSources(sources: Source[], root: string): Finding[] {
   for (const input of sources) {
     const source = ts.createSourceFile(input.file, input.source, ts.ScriptTarget.Latest, true);
     const visit = (node: ts.Node): void => {
-      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-        const specifier = node.moduleSpecifier.text;
+      const candidate = ts.isImportDeclaration(node) ? node.moduleSpecifier
+        : ts.isExportDeclaration(node) ? node.moduleSpecifier
+        : ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) ? node.moduleReference.expression
+        : ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) ? node.argument.literal
+        : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword ? node.arguments[0]
+        : undefined;
+      if (candidate && ts.isStringLiteral(candidate)) {
+        const specifier = candidate.text;
         const target = resolve(dirname(input.file), specifier.replace(/\.js$/, ".ts"));
         const reason = /^(?:\/|[A-Za-z]:[\\/])/.test(specifier) ? "specifier-absolute" : !specifier.startsWith("./") && !specifier.startsWith("../") ? "specifier-not-relative" : !specifier.endsWith(".js") ? "specifier-missing-js-extension" : !inRoot(resolve(root), target) ? "specifier-escapes-root" : !members.has(target) ? "specifier-not-in-product-set" : undefined;
-        if (reason) findings.push(finding(source, node.moduleSpecifier, "B1", reason, specifier));
+        if (reason) findings.push(finding(source, candidate, "B1", reason, specifier));
+      } else if (candidate) {
+        findings.push(finding(source, candidate, "B1", "nonliteral-module-specifier", null));
       }
       if (ts.isIdentifier(node) && isReference(node)) {
         const parent = node.parent;
@@ -51,7 +59,12 @@ export function scanSources(sources: Source[], root: string): Finding[] {
       ts.forEachChild(node, visit);
     };
     visit(source);
-    for (const directive of [...source.referencedFiles, ...source.typeReferenceDirectives, ...source.libReferenceDirectives]) findings.push(finding(source, source, "OOA", `triple-slash:${directive.fileName}`, null));
+    for (const [directives, category] of [[source.referencedFiles, "referencedFiles"], [source.typeReferenceDirectives, "typeReferenceDirectives"], [source.libReferenceDirectives, "libReferenceDirectives"]] as const) {
+      for (const directive of directives) {
+        const location = source.getLineAndCharacterOfPosition(directive.pos);
+        findings.push({ file: source.fileName, line: location.line + 1, column: location.character + 1, boundary: "OOA", reason: `triple-slash:${category}`, specifier: null });
+      }
+    }
   }
   const order = new Map(sources.map(({ file }, index) => [resolve(file), index]));
   return findings.sort((left, right) => (order.get(left.file) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.file) ?? Number.MAX_SAFE_INTEGER) || left.line - right.line || left.column - right.column || left.boundary.localeCompare(right.boundary) || left.reason.localeCompare(right.reason));
