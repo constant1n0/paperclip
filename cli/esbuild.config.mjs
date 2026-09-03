@@ -5,6 +5,7 @@
  * External npm packages remain as regular dependencies.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve, dirname } from "node:path";
@@ -13,6 +14,7 @@ import { bundledCliNpmDependencies } from "../scripts/cli-bundled-npm-dependenci
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
+const cliVersion = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf8")).version;
 
 // Workspace packages whose code should be bundled into the CLI.
 // Note: "server" is excluded — it's published separately and resolved at runtime.
@@ -65,16 +67,48 @@ if (bundledCliNpmDependencies.has("embedded-postgres")) {
   }
 }
 
-/** @type {import('esbuild').BuildOptions} */
-export default {
-  entryPoints: ["src/index.ts"],
-  bundle: true,
-  platform: "node",
-  target: "node20",
-  format: "esm",
-  outfile: "dist/index.js",
-  banner: { js: "#!/usr/bin/env node" },
-  external: [...externals].sort(),
-  treeShaking: true,
-  sourcemap: true,
-};
+const banner = () => ({ js: "#!/usr/bin/env node" });
+
+export function createMainBuildOptions() {
+  return {
+    absWorkingDir: __dirname,
+    entryPoints: [resolve(__dirname, "src/index.ts")],
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    format: "esm",
+    outfile: resolve(__dirname, "dist/index.js"),
+    banner: banner(),
+    define: {},
+    external: [...externals].sort(),
+    treeShaking: true,
+    sourcemap: true,
+  };
+}
+
+/** @param {{ define?: Record<string, string>; metafile?: boolean; write?: boolean }} [input] */
+export function createLocalDiagnosticsBuildOptions(input = {}) {
+  const buildCommit = process.env.PC_BUILD_COMMIT ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).toString().trim();
+  return {
+    absWorkingDir: __dirname,
+    entryPoints: [resolve(__dirname, "src/local-diagnostics/index.ts")],
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    format: "esm",
+    outfile: resolve(__dirname, "dist/local-diagnostics.js"),
+    banner: banner(),
+    define: {
+      __PC_VERSION__: JSON.stringify(cliVersion),
+      __PC_BUILD_COMMIT__: JSON.stringify(buildCommit),
+      ...input.define,
+    },
+    external: [],
+    treeShaking: true,
+    sourcemap: false,
+    ...(input.metafile === undefined ? {} : { metafile: input.metafile }),
+    ...(input.write === undefined ? {} : { write: input.write }),
+  };
+}
+
+export default createMainBuildOptions();
