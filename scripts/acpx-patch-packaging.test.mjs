@@ -194,4 +194,6 @@ test("bundled package dry runs preview without querying published versions", () 
 test("npm builds use corepack instead of requiring a global pnpm", () => {
   assert.match(buildNpmScript, /corepack pnpm -r typecheck/);
   assert.doesNotMatch(buildNpmScript, /^\s*pnpm -r typecheck/m);
+  assert.match(buildNpmScript, /PC_BUILD_COMMIT=.*node build\.mjs/);
+  assert.doesNotMatch(buildNpmScript, /import esbuild from 'esbuild'/);
 });

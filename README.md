@@ -352,6 +352,9 @@ npx --registry https://registry.npmjs.org paperclipai onboard --yes
 > npx --registry https://registry.npmjs.org paperclipai onboard --yes
 > ```
 
+To inspect local Node/runtime build compatibility without contacting a Paperclip
+server, run `npx --package=paperclipai -- paperclipai-local-diagnostics`.
+
 That quickstart path now defaults to trusted local loopback mode for the fastest first run. To start in authenticated/private mode instead, choose a bind preset explicitly:
 
 ```bash
