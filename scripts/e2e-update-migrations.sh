@@ -92,12 +92,13 @@ else
   note "1. Bootstrap: build the CLI from the GitHub tarball of $BASE_REF"
   BOOT="$HOME/e2e-upd-bootstrap"
   mkdir -p "$BOOT"
+  BOOT_SHA="$(curl --fail --silent --show-error --location "https://api.github.com/repos/$E2E_REPO/commits/$BASE_REF" | node -e 'let b="";process.stdin.on("data",c=>b+=c).on("end",()=>{let s;try{s=JSON.parse(b).sha?.toLowerCase()}catch{}if(!/^[0-9a-f]{40}$/.test(s??""))process.exit(1);process.stdout.write(s)})')" && [[ "$BOOT_SHA" =~ ^[0-9a-f]{40}$ ]] || { fail_ "1a bootstrap ref resolution"; exit 1; }
   curl --fail --silent --show-error --location \
-      "https://codeload.github.com/$E2E_REPO/tar.gz/$BASE_REF" \
+      "https://codeload.github.com/$E2E_REPO/tar.gz/$BOOT_SHA" \
     | tar -xz --strip-components=1 -C "$BOOT" || { fail_ "1a bootstrap tarball"; exit 1; }
   ( cd "$BOOT" \
       && corepack pnpm install --frozen-lockfile > "$HOME/e2e-upd-bootstrap-install.log" 2>&1 \
-      && bash scripts/build-npm.sh --skip-checks --skip-typecheck > "$HOME/e2e-upd-bootstrap-build.log" 2>&1 ) \
+      && PC_BUILD_COMMIT="$BOOT_SHA" bash scripts/build-npm.sh --skip-checks --skip-typecheck > "$HOME/e2e-upd-bootstrap-build.log" 2>&1 ) \
     || { tail -40 "$HOME"/e2e-upd-bootstrap-*.log; fail_ "1b bootstrap build"; exit 1; }
   TARBALL="$(cd "$BOOT/cli" && npm pack --silent 2>/dev/null | tail -1)"
   mkdir -p "$HOME/e2e-upd-bootstrap-cli"

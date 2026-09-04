@@ -55,8 +55,9 @@ note "1. Bootstrap: build the new CLI from the GitHub tarball of $E2E_REF"
 # the same CLI code, built from the exact ref under test.
 BOOT="$HOME/e2e-bootstrap"
 mkdir -p "$BOOT"
+BOOT_SHA="$(curl --fail --silent --show-error --location "https://api.github.com/repos/$E2E_REPO/commits/$E2E_REF" | node -e 'let b="";process.stdin.on("data",c=>b+=c).on("end",()=>{let s;try{s=JSON.parse(b).sha?.toLowerCase()}catch{}if(!/^[0-9a-f]{40}$/.test(s??""))process.exit(1);process.stdout.write(s)})')" && [[ "$BOOT_SHA" =~ ^[0-9a-f]{40}$ ]] || { fail_ "1a bootstrap ref resolution"; exit 1; }
 if curl --fail --silent --show-error --location \
-    "https://codeload.github.com/$E2E_REPO/tar.gz/$E2E_REF" \
+    "https://codeload.github.com/$E2E_REPO/tar.gz/$BOOT_SHA" \
     | tar -xz --strip-components=1 -C "$BOOT"; then
   pass "1a bootstrap tarball downloaded from codeload"
 else
@@ -68,7 +69,7 @@ if corepack pnpm install --frozen-lockfile > "$HOME/e2e-bootstrap-install.log" 2
 else
   tail -40 "$HOME/e2e-bootstrap-install.log"; fail_ "1b bootstrap pnpm install"; exit 1
 fi
-if bash scripts/build-npm.sh --skip-checks --skip-typecheck > "$HOME/e2e-bootstrap-build.log" 2>&1; then
+if PC_BUILD_COMMIT="$BOOT_SHA" bash scripts/build-npm.sh --skip-checks --skip-typecheck > "$HOME/e2e-bootstrap-build.log" 2>&1; then
   pass "1c bootstrap build-npm.sh"
 else
   tail -40 "$HOME/e2e-bootstrap-build.log"; fail_ "1c bootstrap build-npm.sh"; exit 1

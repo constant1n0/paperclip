@@ -31,6 +31,8 @@ const dbPackage = JSON.parse(
 const releaseScript = await readFile(new URL("./release.sh", import.meta.url), "utf8");
 const releaseLib = await readFile(new URL("./release-lib.sh", import.meta.url), "utf8");
 const buildNpmScript = await readFile(new URL("./build-npm.sh", import.meta.url), "utf8");
+const installLifecycleScript = await readFile(new URL("./e2e-install-lifecycle.sh", import.meta.url), "utf8");
+const updateMigrationsScript = await readFile(new URL("./e2e-update-migrations.sh", import.meta.url), "utf8");
 
 test("published packages preserve the patched ACPX runtime", () => {
   assert.equal(
@@ -196,4 +198,12 @@ test("npm builds use corepack instead of requiring a global pnpm", () => {
   assert.doesNotMatch(buildNpmScript, /^\s*pnpm -r typecheck/m);
   assert.match(buildNpmScript, /PC_BUILD_COMMIT=.*node build\.mjs/);
   assert.doesNotMatch(buildNpmScript, /import esbuild from 'esbuild'/);
+});
+
+test("codeload bootstrap builds bind resolved provenance", () => {
+  for (const script of [installLifecycleScript, updateMigrationsScript]) {
+    assert.match(script, /BOOT_SHA=.*api\.github\.com\/repos.*\[\[ "\$BOOT_SHA" =~ \^\[0-9a-f\]\{40\}\$ \]\]/);
+    assert.match(script, /codeload\.github\.com[\s\S]*\$BOOT_SHA/);
+    assert.match(script, /PC_BUILD_COMMIT="\$BOOT_SHA" bash scripts\/build-npm\.sh/);
+  }
 });
