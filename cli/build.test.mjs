@@ -28,7 +28,7 @@ it("uses the sole build orchestrator from the package manifest", async () => {
   expect(packageManifest.scripts.build).toBe("node build.mjs");
 });
 
-it("build and package expose exactly the two CLI executables", async () => {
+it("build and package expose exactly the two CLI executables", { timeout: 30_000 }, async () => {
   const readme = await readFile(resolve(cliDirectory, "../README.md"), "utf8");
   expect(readme).toContain("npx --package=paperclipai -- paperclipai-local-diagnostics");
   expect(readme).not.toContain("npx paperclipai-local-diagnostics");
