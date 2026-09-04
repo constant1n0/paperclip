@@ -23,6 +23,25 @@ for arg in "$@"; do
   esac
 done
 
+resolve_build_commit() {
+  local commit="${PC_BUILD_COMMIT:-}"
+  if [ -z "$commit" ]; then
+    if ! commit="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"; then
+      printf '%s\n' "Unable to resolve the build commit." >&2
+      return 1
+    fi
+  fi
+  if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s\n' "PC_BUILD_COMMIT must be an exact lowercase 40-character Git SHA." >&2
+    return 1
+  fi
+  printf '%s\n' "$commit"
+}
+
+if ! build_commit="$(resolve_build_commit)"; then
+  exit 1
+fi
+
 echo "==> Building paperclipai for npm"
 
 # ── Step 1: Forbidden token check ──────────────────────────────────────────────
@@ -42,18 +61,10 @@ else
   echo "  [2/6] Skipping type-check (--skip-typecheck)"
 fi
 
-# ── Step 3: Bundle CLI with esbuild ────────────────────────────────────────────
+# ── Step 3: Bundle CLI through its sole dist writer ─────────────────────────────
 echo "  [3/6] Bundling CLI with esbuild..."
 cd "$CLI_DIR"
-rm -rf dist
-
-node --input-type=module -e "
-import esbuild from 'esbuild';
-import config from './esbuild.config.mjs';
-await esbuild.build(config);
-"
-
-chmod +x dist/index.js
+PC_BUILD_COMMIT="$build_commit" node build.mjs
 
 # ── Step 4: Validate bundled entrypoint syntax ─────────────────────────────────
 echo "  [4/6] Verifying bundled entrypoint syntax..."
