@@ -24,10 +24,11 @@ test("fails closed on snapshot, dirt, and tool mismatches", () => {
 });
 test("plans one offline install, build, and pack without fallback", () => {
   const plan = p.commandPlan("/stage");
-  assert.deepEqual(plan.install, { file: "pnpm", args: ["install", "--offline", "--frozen-lockfile"], env: { COREPACK_ENABLE_NETWORK: "0" } });
+  assert.deepEqual(plan.install, { file: "pnpm", args: ["install", "--offline", "--frozen-lockfile", "--ignore-scripts"], env: { COREPACK_ENABLE_NETWORK: "0" } });
   assert.deepEqual(plan.build, { file: "bash", args: ["scripts/build-npm.sh", "--skip-typecheck"] });
   assert.deepEqual(plan.pack, { file: "pnpm", args: ["pack", "--json", "--pack-destination", "/stage"] });
-  assert.deepEqual(Object.keys(plan), ["install", "typecheck", "build", "pack"]);
+  assert.deepEqual(plan.smoke, { file: "pnpm", args: ["exec", "vitest", "run", "packages/adapter-utils/src/acpx-engine/remote-spawn-smoke.test.ts"] });
+  assert.deepEqual(Object.keys(plan), ["install", "smoke", "typecheck", "build", "pack"]);
   assert.equal(JSON.stringify(plan).includes("retry"), false);
 });
 test("rejects unsafe output directories and target names", () => {

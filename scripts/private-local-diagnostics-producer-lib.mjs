@@ -37,7 +37,8 @@ export function validateTools(value) {
 
 export function commandPlan(stage) {
   return Object.freeze({
-    install: { file: "pnpm", args: ["install", "--offline", "--frozen-lockfile"], env: { COREPACK_ENABLE_NETWORK: "0" } },
+    install: { file: "pnpm", args: ["install", "--offline", "--frozen-lockfile", "--ignore-scripts"], env: { COREPACK_ENABLE_NETWORK: "0" } },
+    smoke: { file: "pnpm", args: ["exec", "vitest", "run", "packages/adapter-utils/src/acpx-engine/remote-spawn-smoke.test.ts"] },
     typecheck: { file: "pnpm", args: ["-r", "typecheck"] },
     build: { file: "bash", args: ["scripts/build-npm.sh", "--skip-typecheck"] },
     pack: { file: "pnpm", args: ["pack", "--json", "--pack-destination", stage] },
