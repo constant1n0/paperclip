@@ -4,9 +4,9 @@ Este documento entrega el estado y la operación segura de `paperclipai-local-di
 
 ## Camino rápido
 
-1. Confirma que recibiste un artefacto ya instalado o una distribución autorizada que incluya el ejecutable.
-2. Ejecuta solo uno de los comandos siguientes; no añadas argumentos posicionales ni otros flags.
-3. Conserva stdout y el código de salida como evidencia. Un resultado nunca autoriza una acción sobre CENTRAL.
+1. Para la ruta normal, confirma el ID de caso, la autorización del propietario humano del sistema y el ID, checksum y provenance del artefacto o distribución autorizados; Teseo solicita y orquesta, y Hefesto ejecuta.
+2. Para la ruta de emergencia fuera de banda, el propietario humano lanza manualmente a Optimus solo cuando Hefesto no puede actuar o Paperclip/OpenClaw no está disponible. Confirma autorización del incidente, artefacto accesible autorizado, destino de evidencia y propietario humano de escalación.
+3. Ejecuta solo uno de los comandos siguientes; no añadas argumentos posicionales ni otros flags. Conserva stdout y el código de salida como evidencia. Un resultado nunca autoriza una acción sobre CENTRAL.
 
 ```bash
 paperclipai-local-diagnostics
@@ -28,16 +28,19 @@ printf 'exit_code=%s\n' "$code"
 
 | Campo | Valor |
 |---|---|
-| Versión del manual | 1.0.0 |
+| Versión del manual | 1.2.0 |
 | Fecha | 2026-09-06 |
-| Fuente Git verificada | `fork/master` `f2c8a5aba3c0339888ede2525050e941980d1970` |
-| Árbol Git verificado | `f8ec620c785db46bc2768a5d9aa4a3abd42e980c` |
+| Fuente Git verificada | `fork/master` `811782130ba42228a5e2ad86f0f3e96e8a47ac3c` |
+| Árbol Git verificado | `d5f208c563f5e07487b04e8627d7ea22206fb1b4` |
 | Estado del cambio | Integrado, verificado y archivado en Engram (`central-local-diagnostics`) |
 | Estado de release | Preparado para distribución pública por configuración; **sin tag ni publicación npm realizada** |
-| Audiencia | Operador humano autorizado, agente autorizado, mantenedor de Paperclip, propietario/autoridad de release |
-| Propietario operativo actual | **UNASSIGNED / POR ASIGNAR** |
+| Audiencia | Propietario humano del sistema, Teseo, Hefesto, Optimus, Atenea, Helios y mantenedor/autoridad de release de Paperclip |
+| Propietario documental | Mantenedor y autoridad de release de Paperclip |
+| Propietario operativo, accountable y de escalación | Propietario humano del sistema |
+| Ejecutor normal elegible | Hefesto, solo por caso explícitamente autorizado y con artefacto distribuido autorizado |
+| Ejecutor excepcional de emergencia | Optimus, externo a Paperclip, solo si el propietario humano lo lanza manualmente para el incidente exacto y dispone de artefacto accesible autorizado |
 
-La fuente canónica de esta guía es este archivo del repositorio. La copia de Engram es índice y espejo de transferencia.
+La fuente canónica de esta guía es este archivo del repositorio y es la autoridad procedimental para esta operación. La copia de Engram es índice y espejo de transferencia. La doctrina desplegada de OpenClaw se referencia de forma estable en `deploy/hefesto-helios/doctrine-applied/hefesto/AGENTS.md`; no sustituye este manual ni concede permisos adicionales.
 
 ## Informe ejecutivo de situación
 
@@ -47,7 +50,7 @@ Se entregó un ejecutable independiente, `paperclipai-local-diagnostics`, con un
 - compatibilidad del runtime Node del proceso de diagnóstico;
 - checks, límites de alcance y garantías negativas declaradas.
 
-El valor operativo es poder registrar esa evidencia sin iniciar la CLI normal ni el servidor, y sin consultar configuración, estado o salud de CENTRAL. El cambio está integrado y archivado; no hay daemon, planificador ni agente asignado. La ejecución es siempre manual y requiere autorización explícita para un agente futuro.
+El valor operativo es poder registrar esa evidencia sin iniciar la CLI normal ni el servidor, y sin consultar configuración, estado o salud de CENTRAL. El cambio está integrado y archivado; no hay daemon ni planificador. La ruta normal es Teseo → autorización del propietario humano → Hefesto. La ruta de emergencia fuera de banda es propietario humano → lanzamiento manual de Optimus: Optimus es externo, informa directamente al propietario y no depende de la disponibilidad de Paperclip/OpenClaw.
 
 ## Propósito y anti-propósito
 
@@ -62,14 +65,17 @@ El valor operativo es poder registrar esa evidencia sin iniciar la CLI normal ni
 
 ## Responsabilidad y modelo de asignación
 
-| Actividad | Responsable | Aprobador | Consultado | Informado |
+| Actividad | R — Responsible | A — Accountable | C — Consultado | I — Informado |
 |---|---|---|---|---|
-| Ejecutar y preservar evidencia | Operador humano o agente autorizado — **POR ASIGNAR** | Autoridad del sistema — **POR ASIGNAR** | Mantenedor Paperclip — **POR ASIGNAR** | Dueño de escalación — **POR ASIGNAR** |
-| Interpretar el contrato técnico | Mantenedor Paperclip — **POR ASIGNAR** | Autoridad del sistema — **POR ASIGNAR** | Operador | Dueño de escalación |
-| Aprobar distribución, publicación o release | Autoridad de release — **POR ASIGNAR** | Propietario del sistema — **POR ASIGNAR** | Mantenedor Paperclip | Operador |
-| Resolver una anomalía o decidir acciones sobre CENTRAL | Dueño de escalación — **POR ASIGNAR** | Propietario del sistema — **POR ASIGNAR** | Mantenedor Paperclip | Operador |
+| Solicitar y orquestar un caso | Teseo | Propietario humano del sistema | Atenea cuando haya consideración de seguridad | Helios |
+| Autorizar el caso y ser dueño de escalación | — | Propietario humano del sistema | Atenea cuando haya consideración de seguridad | Teseo, Helios |
+| Ejecutar la invocación permitida y preservar evidencia | Hefesto, únicamente para un caso explícitamente autorizado y con artefacto distribuido autorizado | Propietario humano del sistema | Atenea cuando haya consideración de seguridad | Helios; Teseo |
+| Ejecutar excepcionalmente en emergencia fuera de banda | Optimus, solo como break-glass para el incidente exacto cuando Hefesto no puede actuar o Paperclip/OpenClaw no está disponible; no es responsable rutinario | Propietario humano del sistema | Atenea cuando haya consideración de seguridad | Teseo, Helios |
+| Interpretar el contrato técnico del ejecutable | Mantenedor de Paperclip | Propietario humano del sistema | Atenea cuando haya consideración de seguridad | Teseo, Helios |
+| Fuente, build, distribución, provenance, instalación y release de Paperclip | Mantenedor y autoridad de release de Paperclip | Mantenedor y autoridad de release de Paperclip | Propietario humano del sistema; Atenea cuando haya consideración de seguridad | Teseo, Helios |
+| Resolver una anomalía o decidir cualquier acción sobre CENTRAL | — | Propietario humano del sistema | Atenea; mantenedor de Paperclip cuando corresponda | Teseo, Helios |
 
-No se asigna esta responsabilidad a Teseo, Atenea ni a una persona concreta sin una decisión de gobernanza.
+Teseo solicita y orquesta; no ejecuta ni autoriza por defecto. Atenea es consultada para seguridad; no ejecuta ni es aprobador general. Helios solo observa e informa. Optimus es externo a Paperclip, es lanzado manualmente por el propietario humano y reporta directamente a este. El mantenedor y la autoridad de release de Paperclip son una función separada: no son Hefesto ni Optimus y no adquieren ejecución operativa por esta tabla.
 
 ## Arquitectura y flujo
 
@@ -83,7 +89,7 @@ flowchart LR
 
 **Alternativa textual:** un operador invoca un único ejecutable independiente. Este crea un resultado canónico v1 y lo renderiza como JSON por defecto o como texto únicamente en éxito con `--text`. El flujo no incluye servidor, base de datos, red, configuración, archivos de CENTRAL, procesos auxiliares ni activación.
 
-## Disponibilidad e instalación: relevo al asignado
+## Disponibilidad e instalación: distribución autorizada
 
 Que el código fuente esté integrado no significa que un binario distribuible esté disponible. `cli/package.json` declara el bin `paperclipai-local-diagnostics` y `publishConfig.access: public`, pero esta entrega no ejecutó publicación npm ni release.
 
@@ -96,7 +102,7 @@ Que el código fuente esté integrado no significa que un binario distribuible e
 | Artefacto | Bin declarado hacia `dist/local-diagnostics.js` | El operador necesita un paquete instalado o un artefacto construido y autorizado. |
 | Distribución | No publicada por este cambio | El asignado debe recibir prueba concreta de release/artefacto e instrucciones aprobadas de instalación. |
 
-Antes de entregar la operación, la autoridad de release debe proporcionar: identificador y origen del artefacto, versión, commit de build de 40 caracteres, checksum del artefacto si existe, método autorizado de instalación y contacto de escalación. Si falta cualquiera, marca la disponibilidad como **[POR VERIFICAR]**; no intentes instalar, publicar ni construir por iniciativa propia.
+Antes de autorizar la operación, el caso debe contener: ID de caso, autorización del propietario humano del sistema, ID y origen del artefacto, checksum y provenance, versión, commit de build de 40 caracteres si aplica, destino de evidencia aprobado y propietario humano de escalación. En la ruta de emergencia, debe añadir el motivo concreto de break-glass y confirmar que Optimus dispone de un artefacto autorizado accesible. Que Optimus sea externo no implica que el ejecutable, el host, el runtime o el artefacto estén disponibles ni que se puedan sortear controles de sistema operativo o acceso. El mantenedor y la autoridad de release de Paperclip gestionan fuente, build, distribución, provenance, instalación y release; Hefesto y Optimus no los realizan. Si falta la distribución o cualquiera de sus datos de identificación, marca la disponibilidad como **[POR VERIFICAR]**; no intentes instalar, publicar ni construir por iniciativa propia.
 
 ### Ruta de build para mantenimiento (no es el camino del operador)
 
@@ -193,7 +199,10 @@ Ejemplo de incompatibilidad: `status` es `incompatible`, `runtime.node` es `fail
 
 ### Antes de ejecutar
 
-- Confirma autorización, responsable de escalación y origen del artefacto.
+- Confirma la ruta: normal con Hefesto, o emergencia fuera de banda con Optimus lanzado manualmente por el propietario humano.
+- Para Hefesto, confirma el ID de caso, la autorización del propietario humano del sistema y que es el ejecutor asignado.
+- Para Optimus, confirma el incidente exacto, el motivo por el que Hefesto no puede actuar o Paperclip/OpenClaw no está disponible, y la autorización explícita del propietario humano para el lanzamiento manual.
+- Confirma ID, checksum y provenance del artefacto distribuido autorizado, el destino de evidencia aprobado y el propietario humano de escalación.
 - Verifica que la petición es solo de provenance/compatibilidad y no una solicitud de diagnóstico de CENTRAL.
 - Prepara un identificador de caso no sensible y un lugar de almacenamiento aprobado.
 - No prepares secretos, variables de entorno, rutas de datos ni flags de la CLI normal: no son entradas autorizadas.
@@ -213,36 +222,51 @@ Conserva solo la salida del ejecutable, el código de salida, fecha/hora de regi
 Plantilla mínima de evidencia:
 
 ```text
-case_id: ID_DE_CASO
-authorized_by: POR_ASIGNAR
-operator: POR_ASIGNAR
-artifact_id: POR_VERIFICAR
+case_id: CASE_ID
+owner_authorization: OWNER_AUTHORIZATION_REFERENCE
+operator: Hefesto|Optimus
+artifact_id: AUTHORIZED_ARTIFACT_ID
+artifact_checksum: AUTHORIZED_ARTIFACT_CHECKSUM
+artifact_provenance: AUTHORIZED_ARTIFACT_PROVENANCE
+evidence_destination: APPROVED_EVIDENCE_DESTINATION
 invocation: paperclipai-local-diagnostics --json
 exit_code: 0|2|3
 stdout_sha256: SHA256_DE_LA_SALIDA
 status: ok|incompatible|error
 error_code: AUSENTE|CODIGO_CERRADO
 scope_confirmed_not_assessed: yes|no
-escalated_to: POR_ASIGNAR|no_aplica
+escalation_owner: HUMAN_SYSTEM_OWNER|no_aplica
 ```
 
 ## Runbook humano y contrato para agentes
 
 ### Acciones autorizadas
 
-Un operador humano autorizado o un agente explícitamente autorizado puede: ejecutar una de las tres invocaciones permitidas, leer stdout, registrar el código de salida, validar JSON y elevar evidencia. Un agente no debe actuar por defecto: la autorización debe identificar caso, artefacto, destinatario y límite de acción.
+#### Ruta normal: Hefesto
+
+Hefesto es el ejecutor responsable normal. Solo puede ejecutar una de las tres invocaciones permitidas, leer stdout, registrar el código de salida, validar JSON y elevar evidencia para un caso explícitamente autorizado por el propietario humano del sistema. La autorización debe incluir ID de caso, autorización del propietario, ID, checksum y provenance del artefacto distribuido autorizado, destino de evidencia aprobado, propietario de escalación y límite de acción. Teseo puede solicitar y orquestar el caso, pero no ejecuta ni autoriza por defecto.
+
+#### Ruta de emergencia fuera de banda: Optimus
+
+Optimus es un agente externo a Paperclip. El propietario humano lo lanza manualmente solo para el incidente exacto cuando Hefesto no puede actuar o Paperclip/OpenClaw no está disponible. Optimus puede ejecutar la misma invocación permitida y preservar evidencia, con: ID de incidente, autorización explícita del propietario humano, motivo del break-glass, ID, checksum y provenance de un artefacto autorizado accesible, destino de evidencia aprobado y propietario humano de escalación. Optimus informa directamente al propietario humano. No adquiere autoridad rutinaria, acceso persistente, credenciales permanentes ni capacidad de sortear controles de sistema operativo o acceso.
+
+#### Autoridad de override de seguridad separada
+
+El override intencional de una política, contención o kill-switch de Atenea/Égida pertenece exclusivamente al mandato de emergencia separado de Optimus; no a este manual de diagnóstico. Solo puede autorizarse para el incidente exacto por el propietario humano, con control y objetivo nombrados, alcance y tiempo acotados, evidencia, plan de rollback o reactivación y auditoría posterior al incidente. Este manual nunca autoriza remediation ni override, y ninguna salida del ejecutable autoriza una acción sobre CENTRAL.
 
 ### Acciones prohibidas
 
 - No reparar, activar, arrancar, detener ni reconfigurar CENTRAL.
 - No afirmar salud, liveness, readiness, disponibilidad o estado de CENTRAL.
-- No sondear entorno, archivos, procesos, red, base de datos, puertos ni configuración.
+- No sondear host, shell, entorno, archivos, procesos, red, base de datos, puertos ni configuración.
+- No ejecutar de forma autónoma o programada, realizar remediation, usar credenciales ni ampliar el alcance autorizado.
+- Optimus no puede autoautorizarse, conservar credenciales o autoridad de override, tratar un bypass como permanente ni sortear controles de sistema operativo o acceso sin autorización separada del incidente.
 - No añadir flags, argumentos, `--help`, redirecciones a destinos no aprobados ni comandos auxiliares de investigación.
-- No instalar, compilar, publicar, etiquetar o cambiar paquetes sin autorización de release independiente.
+- No instalar, compilar, publicar, etiquetar, construir, distribuir ni cambiar paquetes; esas funciones corresponden por separado al mantenedor y la autoridad de release de Paperclip.
 
 ### Condiciones de parada y escalación
 
-Detente y escala si falta autorización o evidencia de artefacto; el bin no existe; el resultado es 2 o 3; la salida está malformada o mezclada; hay stderr/logs/efectos inesperados; o la solicitud intenta convertir el resultado en una afirmación sobre CENTRAL.
+Detente y escala al propietario humano del sistema si falta cualquiera de las entradas obligatorias o evidencia de artefacto; si Optimus no fue lanzado manualmente para el incidente exacto; el bin, host o runtime no están disponibles; el resultado es 2 o 3; la salida está malformada o mezclada; hay stderr/logs/efectos inesperados; o la solicitud intenta convertir el resultado en una afirmación sobre CENTRAL. La falta de disponibilidad no autoriza instalación, build, bypass de controles ni remediation.
 
 Respuesta mínima de un agente:
 
@@ -260,16 +284,36 @@ Respuesta mínima de un agente:
 }
 ```
 
-Prompt de asignación copiable para un agente futuro:
+Prompt de asignación copiable para Hefesto:
 
 ```text
-Estás autorizado únicamente para ejecutar CENTRAL Local Diagnostics para el caso CASE_ID.
-Artefacto autorizado: ARTIFACT_ID. Ejecuta exactamente:
+Eres Hefesto. Estás autorizado únicamente para ejecutar CENTRAL Local Diagnostics para el caso CASE_ID.
+Autorización del propietario humano: OWNER_AUTHORIZATION_REFERENCE.
+Artefacto distribuido autorizado: ARTIFACT_ID; checksum: ARTIFACT_CHECKSUM; provenance: ARTIFACT_PROVENANCE.
+Destino de evidencia aprobado: EVIDENCE_LOCATION. Propietario humano de escalación: ESCALATION_OWNER.
+Ejecuta exactamente:
 paperclipai-local-diagnostics --json
 Guarda stdout y el código de salida en EVIDENCE_LOCATION aprobada. Valida un único JSON v1.
-No uses otros argumentos ni comandos; no inspecciones archivos, entorno, red, procesos, configuración o CENTRAL;
-no realices remediation; no afirmes salud/liveness/readiness de CENTRAL. Si exitCode no es 0, stdout no es JSON
+No uses otros argumentos ni comandos; no inspecciones host, shell, entorno, archivos, red, procesos, configuración o CENTRAL;
+no realices remediation ni ejecuciones autónomas o programadas; no instales, construyas, distribuyas, publiques ni liberes;
+no uses credenciales ni amplíes el alcance; no afirmes salud/liveness/readiness de CENTRAL. Si exitCode no es 0, stdout no es JSON
 único o observas cualquier efecto inesperado, detente y escala a ESCALATION_OWNER. Devuelve el sobre JSON acordado.
+```
+
+Prompt de asignación copiable para Optimus en emergencia:
+
+```text
+Eres Optimus, agente externo a Paperclip. El propietario humano te ha lanzado manualmente solo para el incidente INCIDENT_ID.
+Autorización explícita del propietario: OWNER_EMERGENCY_AUTHORIZATION. Motivo break-glass: BREAK_GLASS_REASON.
+Hefesto no puede actuar o Paperclip/OpenClaw no está disponible: BLOCKED_OR_UNAVAILABLE_CONDITION.
+Artefacto accesible autorizado: ARTIFACT_ID; checksum: ARTIFACT_CHECKSUM; provenance: ARTIFACT_PROVENANCE.
+Destino de evidencia aprobado: EVIDENCE_LOCATION. Propietario humano de escalación: ESCALATION_OWNER.
+Si el bin y runtime están disponibles, ejecuta exactamente:
+paperclipai-local-diagnostics --json
+Conserva stdout y el código de salida en EVIDENCE_LOCATION y reporta directamente al propietario humano.
+No instales, construyas, publiques, liberes, remedies ni inspecciones host, shell, entorno, archivos, red, procesos, configuración o CENTRAL.
+No eludas controles de sistema operativo o acceso; no te autoautorices ni conserves autoridad o credenciales. Este manual no autoriza
+override de Atenea/Égida ni acción sobre CENTRAL. Si falta cualquier entrada, el bin o runtime no está disponible, o observas un efecto inesperado,
 ```
 
 ## Seguridad y privacidad
@@ -314,9 +358,10 @@ Esta sección es evidencia de implementación, no un procedimiento que el operad
 
 ### Antes de asignar
 
-- [ ] Se nombró operador, autoridad y dueño de escalación (sin asumir identidades).
-- [ ] Se aprobó explícitamente el uso manual o por agente.
-- [ ] Se entregó evidencia del artefacto/distribución; la ausencia de publicación npm está entendida.
+- [ ] La ruta normal identifica a Hefesto como ejecutor responsable y contiene autorización explícita del propietario humano del sistema; o la emergencia identifica el incidente exacto y el lanzamiento manual de Optimus.
+- [ ] Se registraron ID, checksum y provenance del artefacto distribuido autorizado; la ausencia de publicación npm está entendida.
+- [ ] Se aprobó el destino de evidencia y se identificó el propietario humano de escalación.
+- [ ] Para Optimus, se confirmó el motivo break-glass, el artefacto accesible y que no hay autoridad de override concedida por este manual.
 - [ ] Se confirmó que el objetivo es compatibility/provenance, no CENTRAL.
 - [ ] Se aprobó almacenamiento de evidencia.
 
@@ -330,8 +375,8 @@ Esta sección es evidencia de implementación, no un procedimiento que el operad
 
 ## Ítems abiertos
 
-1. **POR ASIGNAR:** operador, mantenedor, autoridad de sistema/release y dueño de escalación.
-2. **Sin release:** decidir distribución, tag o publicación requiere flujo separado y autorización del propietario.
+1. **[POR VERIFICAR] Distribución de artefacto:** identificador, ubicación, checksum y provenance del artefacto accesible que recibirán Hefesto u Optimus; no existe publicación realizada por este cambio.
+2. **Sin release:** decidir distribución, tag o publicación requiere flujo separado gestionado por el mantenedor y la autoridad de release de Paperclip.
 3. **TS2353 baseline:** deuda no relacionada; tratarla en un cambio separado si se prioriza.
 4. **Notion opcional:** no existe sincronización requerida para esta entrega; decidirla por separado si se desea seguimiento humano.
 
@@ -344,6 +389,8 @@ Esta sección es evidencia de implementación, no un procedimiento que el operad
 | Runtime compatible | Proceso Node cuyo major es 20 o superior según el código actual. |
 | Resultado canónico | Objeto v1 desde el que se deriva JSON y, solo en éxito, texto. |
 | Operador autorizado | Humano o agente con autorización explícita, alcance y escalación definidos. |
+| Hefesto | Ejecutor responsable de la ruta normal bajo la decisión RACI vigente; no obtiene permisos de instalación, mantenimiento, release ni remediación. |
+| Optimus | Agente externo lanzado manualmente por el propietario humano para la ruta excepcional de emergencia; no es ejecutor rutinario ni obtiene autoridad persistente, bypass ni override por este manual. |
 
 ## Referencias verificadas
 
@@ -351,10 +398,12 @@ Esta sección es evidencia de implementación, no un procedimiento que el operad
 - Build y paquete: `cli/package.json`, `cli/esbuild.config.mjs`, `cli/build.mjs`, `scripts/build-npm.sh`, `cli/build.test.mjs`.
 - Pruebas de contrato y frontera: `cli/src/__tests__/local-diagnostics/{core,renderers,local-diagnostics,bundle-closure,build-options,dependency-boundary}.test.ts`.
 - Convenciones de CLI: `docs/cli/overview.md`, `docs/cli/setup-commands.md`.
+- Decisiones RACI vinculantes: Engram #7776, #7777, #7783 y #7784.
+- Doctrina desplegada de OpenClaw: `deploy/hefesto-helios/doctrine-applied/hefesto/AGENTS.md` (referencia; este manual conserva la autoridad procedimental).
 - Engram: `sdd/central-local-diagnostics/proposal` (#5162), `spec` (#5163), `design` (#5172), `design-master-integration-recovery` (#5956), `verify-report` (#7754), `archive-report` (#7756), `situation-report` (#7759).
 
 ## Límites y elementos por verificar
 
-- **[POR VERIFICAR]** Identificador, ubicación y checksum del artefacto que recibirá cada operador: no existe publicación realizada por este cambio.
-- **[POR VERIFICAR]** Identidades de todas las funciones RACI: permanecen sin asignar.
+- **[POR VERIFICAR]** Identificador, ubicación y checksum del artefacto accesible que recibirá cada ejecutor: no existe publicación realizada por este cambio.
+- **[POR VERIFICAR]** Distribución autorizada para Hefesto u Optimus: se requiere ID, checksum y provenance antes de cualquier caso.
 - No se declara disponibilidad de npm, una instalación concreta ni salud de CENTRAL porque no están probadas por esta guía.
