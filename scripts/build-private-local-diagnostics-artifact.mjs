@@ -4,18 +4,70 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { ARCHIVE_LIMITS, inspectArchive } from "./private-local-diagnostics-archive.mjs";
+import { ARCHIVE_LIMITS, smokeTrustedArchive } from "./private-local-diagnostics-archive.mjs";
 import { canonicalJson, createReceipt, formatReceiptSidecar } from "./private-local-diagnostics-artifact-lib.mjs";
+import { createVerificationManifest, formatVerificationSidecar } from "./private-local-diagnostics-verification-lib.mjs";
 import { assertAbsent, parsePackResult, parseProductionArgs, safeBasename, validateOutDir } from "./private-local-diagnostics-producer-lib.mjs";
 import { withBuildLifecycle } from "./private-local-diagnostics-build-lifecycle.mjs";
 
-const sha = (bytes) => createHash("sha256").update(bytes).digest("hex"), exec = promisify(execFile), fail = (code) => { throw new Error(code); };
+const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const exec = promisify(execFile);
+const fail = (code) => { throw new Error(code); };
 const isMain = () => process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
-function readOne(file) { let fd; try { if (lstatSync(file).isSymbolicLink()) fail("F_ARTIFACT"); fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW); const stat = fstatSync(fd); if (!stat.isFile() || stat.size < 1 || stat.size > ARCHIVE_LIMITS.compressed) fail("F_ARTIFACT"); return readFileSync(fd); } finally { if (fd !== undefined) closeSync(fd); } }
-function write(stage, name, bytes) { writeFileSync(join(stage, safeBasename(name)), bytes, { flag: "wx", mode: 0o600 }); }
-function finals(outDir, stage, names) { const done = []; try { assertAbsent(outDir, names, (file) => { try { lstatSync(file); return true; } catch { return false; } }); for (const name of names) { renameSync(join(stage, name), join(outDir, name)); done.push(name); } } catch (error) { for (const name of done) rmSync(join(outDir, name), { force: true }); throw error; } }
+function readOne(file) {
+  let fd;
+  try {
+    if (lstatSync(file).isSymbolicLink()) fail("F_ARTIFACT");
+    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size < 1 || stat.size > ARCHIVE_LIMITS.compressed) fail("F_ARTIFACT");
+    return readFileSync(fd);
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
+function write(stage, name, bytes) {
+  writeFileSync(join(stage, safeBasename(name)), bytes, { flag: "wx", mode: 0o600 });
+}
+export function finalizeFiles(outDir, stage, names, fs = { assertAbsent, lstatSync, renameSync, rmSync }) {
+  const done = [];
+  try {
+    fs.assertAbsent(outDir, names, (file) => { try { fs.lstatSync(file); return true; } catch { return false; } });
+    for (const name of names) { fs.renameSync(join(stage, name), join(outDir, name)); done.push(name); }
+  } catch (error) {
+    for (const name of done) fs.rmSync(join(outDir, name), { force: true });
+    throw error;
+  }
+}
 export async function produce(input, dependencies = {}) {
-  const args = typeof input?.commit === "string" && typeof input?.outDir === "string" ? input : parseProductionArgs(input), repo = dependencies.repo ?? process.cwd(), outDir = validateOutDir(args.outDir, repo), stage = join(outDir, `.private-local-diagnostics-${randomUUID()}`), lifecycle = dependencies.lifecycle ?? withBuildLifecycle, run = dependencies.run ?? ((file, argv, options) => exec(file, argv, { ...options, shell: false, timeout: 120000, maxBuffer: 1048576 })); let names = [];
-  let packedEvidence; mkdirSync(stage, { mode: 0o700 }); try { const life = await lifecycle({ repo, commit: args.commit, stage }, { callback: async ({ dist, pack }) => { const expectedDistSha256 = Object.fromEntries(["index.js", "local-diagnostics.js"].map((name) => [`dist/${name}`, sha(readOne(join(dist, name)))])), expectedManifestSha256 = sha(readOne(join(dirname(dist), "package.json"))); let packed; try { packed = await run(pack.file, pack.args, { cwd: join(repo, "cli"), env: pack.env, shell: false, timeout: 120000, maxBuffer: 1048576 }); } catch { fail("F_PACK"); } const tgz = readOne(parsePackResult(packed.stdout, stage)); packedEvidence = { tgz, archive: await inspectArchive(tgz, { commit: args.commit, expectedDistSha256, expectedManifestSha256, expectedArtifactSha256: sha(tgz) }, { run }) }; } }); if (!packedEvidence) fail("F_PACK"); const receipt = createReceipt({ source: life.source, build: { nodeVersion: life.node, pnpmVersion: life.pnpm, lockSha256: life.lockSha256, acpxPatchSha256: life.acpxPatchSha256 }, package: packedEvidence.archive.package, artifact: { filename: "", bytes: packedEvidence.archive.bytes, sha256: packedEvidence.archive.sha256 }, diagnostics: (({ command, version, commit: diagnosticCommit }) => ({ command, version, commit: diagnosticCommit }))(packedEvidence.archive.diagnostics), authorization: null, storage: null, signature: null }), receiptName = `${receipt.artifactId}.receipt.json`, receiptBytes = Buffer.from(canonicalJson(receipt)), receiptSha256 = sha(receiptBytes); names = [receipt.artifact.filename, receiptName, `${receipt.artifactId}.receipt.sha256`]; write(stage, names[0], packedEvidence.tgz); write(stage, names[1], receiptBytes); write(stage, names[2], formatReceiptSidecar(receiptName, receiptSha256)); finals(outDir, stage, names); return canonicalJson({ artifact_id: receipt.artifactId, filenames: names, sha256: receipt.artifact.sha256, bytes: receipt.artifact.bytes, receipt_sha256: receiptSha256 }); } finally { rmSync(stage, { recursive: true, force: true }); }
+  const args = typeof input?.commit === "string" && typeof input?.outDir === "string" ? input : parseProductionArgs(input);
+  const repo = dependencies.repo ?? process.cwd(), outDir = validateOutDir(args.outDir, repo);
+  const stage = join(outDir, `.private-local-diagnostics-${randomUUID()}`);
+  const lifecycle = dependencies.lifecycle ?? withBuildLifecycle;
+  const run = dependencies.run ?? ((file, argv, options) => exec(file, argv, { ...options, shell: false, timeout: 120000, maxBuffer: 1048576 }));
+  let names = [], packedEvidence;
+  mkdirSync(stage, { mode: 0o700 });
+  try {
+    const life = await lifecycle({ repo, commit: args.commit, stage }, { callback: async ({ dist, pack }) => {
+      const expectedDistSha256 = Object.fromEntries(["index.js", "local-diagnostics.js"].map((name) => [`dist/${name}`, sha(readOne(join(dist, name)))]));
+      const expectedManifestSha256 = sha(readOne(join(dirname(dist), "package.json")));
+      let packed;
+      try { packed = await run(pack.file, pack.args, { cwd: join(repo, "cli"), env: pack.env, shell: false, timeout: 120000, maxBuffer: 1048576 }); } catch { fail("F_PACK"); }
+      const tgz = readOne(parsePackResult(packed.stdout, stage));
+      packedEvidence = { tgz, archive: await smokeTrustedArchive(tgz, { commit: args.commit, expectedDistSha256, expectedManifestSha256, expectedArtifactSha256: sha(tgz) }, { run }) };
+    } });
+    if (!packedEvidence) fail("F_PACK");
+    const receipt = createReceipt({ source: life.source, build: { nodeVersion: life.node, pnpmVersion: life.pnpm, lockSha256: life.lockSha256, acpxPatchSha256: life.acpxPatchSha256 }, package: packedEvidence.archive.package, artifact: { filename: "", bytes: packedEvidence.archive.bytes, sha256: packedEvidence.archive.sha256 }, diagnostics: (({ command, version, commit }) => ({ command, version, commit }))(packedEvidence.archive.diagnostics), authorization: null, storage: null, signature: null });
+    const receiptName = `${receipt.artifactId}.receipt.json`, receiptBytes = Buffer.from(canonicalJson(receipt)), receiptSha256 = sha(receiptBytes);
+    const verificationName = `${receipt.artifactId}.verification.json`;
+    const verificationBytes = Buffer.from(canonicalJson(createVerificationManifest({ artifactId: receipt.artifactId, receipt: { filename: receiptName, sha256: receiptSha256 }, artifact: receipt.artifact, package: { manifestSha256: receipt.package.manifestSha256, distFiles: packedEvidence.archive.distFiles } })));
+    const verificationSha256 = sha(verificationBytes);
+    names = [receipt.artifact.filename, receiptName, `${receipt.artifactId}.receipt.sha256`, verificationName, `${receipt.artifactId}.verification.sha256`];
+    write(stage, names[0], packedEvidence.tgz);
+    write(stage, names[1], receiptBytes);
+    write(stage, names[2], formatReceiptSidecar(receiptName, receiptSha256));
+    write(stage, names[3], verificationBytes);
+    write(stage, names[4], formatVerificationSidecar(verificationName, verificationSha256));
+    finalizeFiles(outDir, stage, names, dependencies.fs);
+    return canonicalJson({ artifact_id: receipt.artifactId, filenames: names, sha256: receipt.artifact.sha256, bytes: receipt.artifact.bytes, receipt_sha256: receiptSha256, verification_sha256: verificationSha256 });
+  } finally { rmSync(stage, { recursive: true, force: true }); }
 }
 if (isMain()) produce(process.argv.slice(2)).then((out) => process.stdout.write(out)).catch(() => { process.stderr.write("private artifact producer failed\n"); process.exitCode = 1; });
