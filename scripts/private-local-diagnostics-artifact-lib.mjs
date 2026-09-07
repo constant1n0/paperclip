@@ -38,7 +38,7 @@ const fields = {
   ],
   source: ["remote", "ref", "commit", "tree"],
   build: ["nodeVersion", "pnpmVersion", "lockSha256", "acpxPatchSha256"],
-  package: ["name", "version", "bins", "allowlist", "distSha256"],
+  package: ["name", "version", "bins", "allowlist", "distSha256", "manifestSha256"],
   artifact: ["filename", "bytes", "sha256"],
   diagnostics: ["command", "version", "commit"],
 };
@@ -159,6 +159,7 @@ export function validateReceipt(receipt) {
   equal(pkg.bins, PACKAGE_BINS, "package bins");
   equal(pkg.allowlist, PACKAGE_ALLOWLIST, "package allowlist");
   hash(pkg.distSha256, "package.distSha256");
+  hash(pkg.manifestSha256, "package.manifestSha256");
 
   const artifact = object(receipt.artifact, "artifact", fields.artifact);
   if (!Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) {

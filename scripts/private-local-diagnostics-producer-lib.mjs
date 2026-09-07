@@ -6,6 +6,7 @@ const SHA = /^[0-9a-f]{40}$/;
 const APPROVED = "git@github.com:constant1n0/paperclip.git";
 const PACK_TARBALL = `${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz`;
 const fail = (code, message) => { throw new Error(`${code}: ${message}`); };
+const keys = (value, expected) => value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).sort().join("\0") === expected.join("\0");
 
 export function parseProductionArgs(argv) {
   if (!Array.isArray(argv) || argv.length !== 4) fail("P_ARGS", "expected --commit FULL_SHA --out-dir ABSOLUTE_PATH");
@@ -63,9 +64,9 @@ export function assertAbsent(outDir, names, existsSync) {
 export function parsePackResult(text, stage) {
   let parsed;
   try { parsed = JSON.parse(text); } catch { fail("P_PACK", "pnpm pack did not return JSON"); }
-  if (!parsed || Array.isArray(parsed) || Object.getPrototypeOf(parsed) !== Object.prototype || typeof parsed.tarballPath !== "string" || !isAbsolute(stage)) fail("P_PACK", "pnpm pack must report one tarballPath");
-  const target = resolve(parsed.tarballPath), staging = resolve(stage);
-  if (parsed.tarballPath !== target || dirname(target) !== staging || basename(target) !== PACK_TARBALL) fail("P_PACK", "tarball is outside staging");
+  if (!keys(parsed, ["filename"]) || typeof parsed.filename !== "string" || !isAbsolute(parsed.filename) || !isAbsolute(stage)) fail("P_PACK", "pnpm pack must report one absolute filename");
+  const target = resolve(parsed.filename), staging = resolve(stage);
+  if (dirname(target) !== staging || basename(target) !== PACK_TARBALL) fail("P_PACK", "tarball is outside staging");
   return target;
 }
 export function subprocess(file, args, cwd) {

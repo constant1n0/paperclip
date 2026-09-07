@@ -13,6 +13,7 @@ const receiptInput = () => ({
     bins: { paperclipai: "./dist/index.js", "paperclipai-local-diagnostics": "./dist/local-diagnostics.js" },
     allowlist: ["README.md", "dist/index.js", "dist/index.js.map", "dist/local-diagnostics.js", "package.json"],
     distSha256: "c".repeat(64),
+    manifestSha256: "e".repeat(64),
   },
   artifact: { bytes: 1, sha256: "d".repeat(64) },
   diagnostics: { command: "paperclipai-local-diagnostics", version: "0.3.1", commit: COMMIT },
@@ -57,7 +58,7 @@ test("rejects invalid identity, hash, version, and tool values", () => {
   for (const [name, mutate] of [
     ["commit uppercase", (v) => { v.source.commit = COMMIT.toUpperCase(); }], ["tree short", (v) => { v.source.tree = "x"; }],
     ["lock hash uppercase", (v) => { v.build.lockSha256 = "A".repeat(64); }], ["ACPX hash short", (v) => { v.build.acpxPatchSha256 = "b"; }],
-    ["dist hash nonhex", (v) => { v.package.distSha256 = "g".repeat(64); }], ["artifact hash uppercase", (v) => { v.artifact.sha256 = "D".repeat(64); }],
+    ["dist hash nonhex", (v) => { v.package.distSha256 = "g".repeat(64); }], ["manifest hash uppercase", (v) => { v.package.manifestSha256 = "E".repeat(64); }], ["artifact hash uppercase", (v) => { v.artifact.sha256 = "D".repeat(64); }],
     ["version traversal", (v) => { v.package.version = "../0.3.1"; }], ["version whitespace", (v) => { v.package.version = "0.3.1 x"; }],
     ["node", (v) => { v.build.nodeVersion = "v20.0.0"; }], ["pnpm", (v) => { v.build.pnpmVersion = "^9.15.4"; }],
     ["zero bytes", (v) => { v.artifact.bytes = 0; }], ["negative bytes", (v) => { v.artifact.bytes = -1; }], ["fractional bytes", (v) => { v.artifact.bytes = 1.5; }],
