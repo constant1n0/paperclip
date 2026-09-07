@@ -42,8 +42,8 @@ test("rejects unsafe output directories and target names", () => {
 });
 test("requires one staged pnpm tarball and safe subprocess settings", () => {
   const stage = "/stage";
-  const packed = '{"tarballPath":"/stage/paperclipai-0.3.1.tgz"}';
-  for (const value of ["no", "[]", '[{"tarballPath":"/stage/a.tgz"}]', "{}", '{"tarballPath":1}', '{"tarballPath":"a.tgz"}', '{"tarballPath":"/other/a.tgz"}', '{"tarballPath":"/stage/nested/a.tgz"}', '{"tarballPath":"/stage/../a.tgz"}', '{"tarballPath":"/stage/paper clip.tgz"}', '{"tarballPath":"/stage/a;touch-pwn.tgz"}', '{"tarballPath":"/stage/paperclipai-0.3.2.tgz"}', '{"tarballPath":"/stage/other-0.3.1.tgz"}', '{"tarballPath":"/stage/.paperclipai-0.3.1.tgz"}']) assert.throws(() => p.parsePackResult(value, stage), /P_PACK:/);
+  const packed = '{"filename":"/stage/paperclipai-0.3.1.tgz"}';
+  for (const value of ["no", "[]", '[{"filename":"/stage/a.tgz"}]', "{}", '{"filename":1}', '{"filename":"a.tgz"}', '{"filename":"/other/a.tgz"}', '{"filename":"/stage/nested/a.tgz"}', '{"filename":"/stage/../a.tgz"}', '{"filename":"/stage/paper clip.tgz"}', '{"filename":"/stage/a;touch-pwn.tgz"}', '{"filename":"/stage/paperclipai-0.3.2.tgz"}', '{"filename":"/stage/other-0.3.1.tgz"}', '{"filename":"/stage/.paperclipai-0.3.1.tgz"}', '{"tarballPath":"/stage/paperclipai-0.3.1.tgz"}', '{"filename":"/stage/paperclipai-0.3.1.tgz","extra":true}']) assert.throws(() => p.parsePackResult(value, stage), /P_PACK:/);
   assert.equal(p.parsePackResult(packed, stage), "/stage/paperclipai-0.3.1.tgz");
   assert.deepEqual(p.subprocess("pnpm", ["pack"], "/repo"), { file: "pnpm", args: ["pack"], options: { cwd: "/repo", shell: false, stdio: "pipe", timeout: 120000, maxBuffer: 1048576 } });
 });

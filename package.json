@@ -31,6 +31,7 @@
     "secrets:migrate-inline-env": "tsx scripts/migrate-inline-env-secrets.ts",
     "db:backup": "./scripts/backup-db.sh",
     "paperclipai": "node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts",
+    "artifact:local-diagnostics": "node scripts/build-private-local-diagnostics-artifact.mjs",
     "build:npm": "./scripts/build-npm.sh",
     "release": "./scripts/release.sh",
     "release:canary": "./scripts/release.sh canary",
