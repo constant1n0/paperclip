@@ -4,6 +4,7 @@
 
 - P0a and P0b are merged in the declared base `fork/master@c5acc8cb24dabaa7ce4cd8512ed667a76c35cb2b`.
 - P1 recovery generation 4, ordinal 4 applied the owner-authorized P1R-GATE-001/002 and P1R-JD-001/002 contract fixes in this clean worktree. It closed `passed` at runtime revision `sha256:95f4a2fe615a243a58f0cc196fea75240b2696605c1d37b28e2ee627b5c15b38`, with 82 native remediation lines and evidence `sha256:e7b7764944b3bd49ecd057ef6d5e3daf004d98104a001ddab373d8b3d72b8a49`. Generation 1 and generation 2 sources/evidence are superseded and quarantined; they are not implementation input or claimed as evidence here.
+- P1 source is committed locally as `884a4d03ae421d95bf2378a08ce48379316d8d68`. A separate clean release worktree now carries only the incident/review record needed before publication.
 - P2 and P3 remain blocked and untouched.
 
 ## P1 Evidence
@@ -16,4 +17,4 @@
 
 Current P1 diff accounting is 207 added/deleted lines against the declared base, below the 350-line ceiling.
 
-Stacked-to-main P1 contract slice only. No staging, commit, publication, verifier/CLI/manual/P2/P3 edit, custody resolution, signer, fetch, or secret access occurred.
+Stacked-to-main P1 contract slice only. No push, PR, publication, verifier/CLI/manual/P2/P3 edit, custody resolution, signer, fetch, or secret access occurred.

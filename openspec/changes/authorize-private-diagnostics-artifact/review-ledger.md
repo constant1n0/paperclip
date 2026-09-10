@@ -225,3 +225,17 @@ This section is the authoritative scoped fix diff for re-judges; ranges refer to
 
 - Findings ledger: empty.
 - One exhaustive reliability sweep returned `PRE-COMMIT: PASS`.
+
+## P1 pre-push clean-room incident and recovery
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R1-INC-001 | risk | retired `/home/dcm/paperclip/_build-722-p1-recovery/.codegraph/` | BLOCKER | fixed | An unexpected untracked protected directory invalidated that worktree as a release candidate. The general refuter confirmed the blocker. The worktree remains untouched and retired; this release worktree was created from exact immutable commit `884a4d03a` and verified clean with `.codegraph` and `.engram` absent. |
+| R1-INC-002 | risk | retired recovery worktree pre-push attestation | WARNING | info | The earlier pre-push attestation was discarded because its worktree boundary was no longer clean. It is not release evidence. |
+| R4-002 | resilience | worktree creation command | WARNING | info | An initial `git worktree add` used the non-repository container as cwd and failed closed without mutation. The corrected command ran from a registered worktree. |
+
+- A fresh risk reviewer read `c5acc8cb2..884a4d03a` only from the `_wt-upstream` Git object store and never accessed this release worktree.
+- Valid findings ledger: empty.
+- The release worktree remained clean at `884a4d03a`, with both protected directories absent.
+
+**P1 PRE-PUSH: PASS**
