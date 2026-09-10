@@ -52,7 +52,16 @@ test("RED contract: enforces the two exact policy pairs and nanosecond UTC inter
     (v) => { v.grant.issuedAt = "2026-02-30T00:00:00Z"; }, (v) => { v.grant.incidentId = "incident_1"; },
     (v) => { v.grant.audience.mode = "break-glass"; }, (v) => { v.grant.expiresAt = v.grant.issuedAt; },
   ]) { const invalid = evidence(); mutate(invalid); assert.throws(() => auth.validateAuthorizationEvidence(invalid), /E_AUTH/); }
-  const optimus = evidence(); Object.assign(optimus.grant, { incidentId: "incident_1", audience: { principal: "optimus", mode: "break-glass" } });
+  const optimus = evidence();
+  Object.assign(optimus.grant, { incidentId: "incident_1", audience: { principal: "optimus", mode: "break-glass" } });
   assert.doesNotThrow(() => auth.validateAuthorizationPolicy(optimus, { audience: "optimus", caseId: "case_1", incidentId: "incident_1" }, "2026-01-01T00:00:00.000000001Z"));
-  for (const context of [{ audience: "hefesto", caseId: "case_1", incidentId: "x" }, { audience: "optimus", caseId: "case_1" }, { audience: "optimus", caseId: "case_1", incidentId: "case_1" }, { audience: "optimus", caseId: "other", incidentId: "incident_1" }]) assert.throws(() => auth.validateAuthorizationPolicy(optimus, context, "2026-01-01T00:00:00.000000001Z"), /E_AUTH/);
+  const invalidContexts = [
+    { audience: "hefesto", caseId: "case_1", incidentId: "x" },
+    { audience: "optimus", caseId: "case_1" },
+    { audience: "optimus", caseId: "case_1", incidentId: "case_1" },
+    { audience: "optimus", caseId: "other", incidentId: "incident_1" },
+  ];
+  for (const context of invalidContexts) {
+    assert.throws(() => auth.validateAuthorizationPolicy(optimus, context, "2026-01-01T00:00:00.000000001Z"), /E_AUTH/);
+  }
 });

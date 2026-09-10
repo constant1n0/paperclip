@@ -239,3 +239,32 @@ This section is the authoritative scoped fix diff for re-judges; ranges refer to
 - The release worktree remained clean at `884a4d03a`, with both protected directories absent.
 
 **P1 PRE-PUSH: PASS**
+
+## P1 pre-PR full-4R review — round 1
+
+- R1 risk findings ledger: empty.
+- R3 reliability findings ledger: empty.
+- R4 resilience findings ledger: empty.
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R2-001 | readability | `scripts/private-local-diagnostics-authorization-lib.test.mjs:55-57` | CRITICAL | open | Readability reported that the final policy loop references undeclared `optimus` and `context`, which would prevent the intended Optimus cases from exercising `E_AUTH`. The committed diff visibly declares both identifiers and the focused suite passed 4/4, but all three mandatory refuter verdicts returned `stands`; under the protocol the finding remains open. |
+
+- Refuter votes: correctness `stands` (0.99); exploitability/impact `stands` (0.98); reproducibility `stands` by required inconclusive default (0.55).
+- No other full-4R finding was reported.
+
+**P1 PRE-PR: BLOCKED**
+
+## P1 pre-PR R2-001 generation-5 mechanical clarification
+
+- **Authoritative fix range:** `scripts/private-local-diagnostics-authorization-lib.test.mjs:55-68`.
+- **Before:** The Optimus fixture setup and invalid-context loop shared dense one-line statements, allowing a readability interpretation that the loop callback did not visibly bind `optimus` and `context` to the `E_AUTH` assertion.
+- **After:** `optimus`, its `Object.assign`, and the positive policy assertion are separate statements; `invalidContexts` is named; the braced loop explicitly passes `optimus` and `context` to `validateAuthorizationPolicy` inside the `E_AUTH` assertion callback.
+- **R2-001:** verified by a fresh scoped readability re-review of the authoritative range; the focused test proves all four invalid contexts reach the intended `E_AUTH` assertions.
+
+**P1 PRE-PR FIX ROUND 1: PASS**
+
+## P1 generation-5 pre-commit/pre-push review
+
+- Findings ledger: empty.
+- One exhaustive readability sweep returned `PRE-COMMIT/PRE-PUSH: PASS`.
