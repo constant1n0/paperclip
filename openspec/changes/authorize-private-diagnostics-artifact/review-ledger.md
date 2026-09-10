@@ -186,3 +186,42 @@ This section is the authoritative scoped fix diff for re-judges; ranges refer to
 
 - Judges A and B verified P0B-JD-001/P0B-JD-002 with no new fix-line finding; both returned `JUDGMENT: APPROVED`.
 - The corrected automatic gate passed the 336-line bundle, arithmetic, branch/base, task state and no-publication checks. **P0b JUDGMENT: APPROVED**
+
+## P1 clean-room post-apply review — round 1
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| P1R-GATE-001 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.mjs:4-31,38-47`; receipt identity at `scripts/private-local-diagnostics-artifact-lib.mjs:94-101` | CRITICAL | fixed | `artifactId` now uses the receipt v1 safe-basename grammar, accepts dotted production versions, and still derives exact filenames, fixed locator, and bindings. |
+| P1R-GATE-002 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.test.mjs:39-51`; `spec.md:59` | CRITICAL | fixed | Deterministic policy coverage accepts exactly `issuedAt`, rejects one nanosecond before, and rejects exact expiry. |
+| P1R-JD-001 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.mjs:3-31` | CRITICAL | fixed | Absolute full-string matching now rejects terminal LF/CRLF in hashes, IDs, RFC3339 timestamps, and bounded references. |
+| P1R-JD-002 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.mjs:62-65` | CRITICAL | fixed | The sidecar must equal its exact constructed bytes, rejecting extra terminal newlines. |
+| P1R-JD-003 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.test.mjs:25-46` | WARNING | info | The judges identified additional non-blocking negative-coverage gaps, including nested/prototype fields, unsafe bytes, and custody/revocation values. |
+| P1R-JD-004 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.mjs:25-29` | WARNING | info | Judge A noted `Date.UTC` remaps years 0000-0099. This is an exact-RFC3339 edge signal, not a confirmed blocking finding. |
+
+- Confirmed gate blockers: 2; single-judge suspects: 2; informational warnings: 2.
+- Judge A: `JUDGMENT: REJECTED`; Judge B: `JUDGMENT: APPROVED`; static automatic gate: `fail`.
+
+**P1 clean-room round 1 JUDGMENT: REJECTED**
+
+## P1 clean-room fix round 1 — authoritative scoped ranges
+
+- **P1R-GATE-001:** `scripts/private-local-diagnostics-authorization-lib.mjs:4-31,38-47`; `scripts/private-local-diagnostics-authorization-lib.test.mjs:5-46`.
+- **P1R-GATE-002:** `scripts/private-local-diagnostics-authorization-lib.test.mjs:49-52`.
+- **P1R-JD-001:** `scripts/private-local-diagnostics-authorization-lib.mjs:3-31`; `scripts/private-local-diagnostics-authorization-lib.test.mjs:43-46`.
+- **P1R-JD-002:** `scripts/private-local-diagnostics-authorization-lib.mjs:62-65`; `scripts/private-local-diagnostics-authorization-lib.test.mjs:34`.
+- Judges A and B independently verified all four fixed rows with no new fix-line finding; both returned `JUDGMENT: APPROVED`.
+- The fresh automatic gate verified all four rows, the 350-line ceiling and no-publication scope; `gate: pass`.
+- P1R-JD-003/004 remain informational and untouched.
+
+**P1 clean-room fix round 1 JUDGMENT: APPROVED**
+
+## P1 runtime finish CLI incident
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R4-001 | resilience | `gentle-ai` v2.2.0 `sdd-attempt finish`; installed `internal/cli/sdd_attempt.go:154-159` | WARNING | info | A first close command supplied unsupported `--changed-lines`; validation rejected it before opening the runtime store. The CLI measures changed lines internally. The attempt remained running at the same revision and is safe to finish without that flag. |
+
+## P1 pre-commit reliability review
+
+- Findings ledger: empty.
+- One exhaustive reliability sweep returned `PRE-COMMIT: PASS`.
