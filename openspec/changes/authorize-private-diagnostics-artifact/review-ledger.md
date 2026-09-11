@@ -289,3 +289,8 @@ This section is the authoritative scoped fix diff for re-judges; ranges refer to
 - Generation 7 closed at runtime `sha256:71d5f634750a981fe1c50ff1e609658f570d199eed0679637904c9a03deba446`, evidence `sha256:43d850793de8b016cb7ce5520107650680c1da344a3b7e90b47206ed6b53213f`.
 - One exhaustive reliability sweep returned `PRE-COMMIT: PASS`; R3-002 remains information only and does not trigger a fix cycle.
 - Runtime begin revision-conflict incident audit: empty ledger; the rejected begin changed no state, so only the same begin request was replayed with the runtime-returned revision.
+
+## Generation 10 external rerun
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R3-003 | reliability | `apply-progress.md:30` | WARNING | info | Greptile reached 5/5 and the old R3-001 thread resolved; the current full P1 count is corrected locally, with external rereview and thread resolution pending. |

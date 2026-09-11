@@ -27,5 +27,5 @@ Generation 5 remained within its 80-line cap and preserved the P1-only boundary;
 - Free Starter constraint: no commit, push, external Greptile retrigger, or merge occurred.
 - RED: the focused authorization suite failed on canonical year `0001` evidence before production code changed.
 - GREEN: year `0001`, the `0099`→`0100` policy interval, and impossible `0001-02-29` behavior passed after the no-remap construction.
-- Final accounting: 290 additions and 3 deletions (293 changed lines) against the declared P1 base; generation 6 is 31 additions and 1 deletion (32 changed lines).
-- Both blind scoped judges returned `JUDGMENT: APPROVED`; pending separate commit and push authorization, then external Greptile 5/5 evidence.
+- Current full P1 base-to-candidate accounting after all generation-10 ledger additions: 304 additions and 3 deletions (307 changed lines) against the declared P1 base; generation 6 itself was 31 additions and 1 deletion (32 changed lines).
+- Both blind scoped judges returned `JUDGMENT: APPROVED`; Greptile later reached 5/5 at `f14867c42`, with count-only R3-003 pending external rereview.
