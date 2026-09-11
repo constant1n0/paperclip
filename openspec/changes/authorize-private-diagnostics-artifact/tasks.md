@@ -35,9 +35,9 @@ Retain every branch; each merge needs separate owner authorization. Do not begin
 
 ## Phase 2: Evidence Contract (P1)
 
-- [ ] 2.1 RED: add contract cases in `scripts/private-local-diagnostics-authorization-lib.test.mjs` for closed/canonical JSON, UTC, hashes, bytes, sidecar, and Hefesto/Optimus incident rules.
-- [ ] 2.2 Create `scripts/private-local-diagnostics-authorization-lib.mjs`; export pure parser, one-policy validator, cross-binding, canonical custody strings, and sidecar helpers—no signer, fetch, custody parser, or host-path resolution.
-- [ ] 2.3 Update `scripts/private-local-diagnostics-artifact-lib.mjs` only for reusable safe helpers; prove `receipt` v1 null slots and five-file producer bytes/semantics remain unchanged in its tests.
+- [x] 2.1 RED: add contract cases in `scripts/private-local-diagnostics-authorization-lib.test.mjs` for closed/canonical JSON, UTC, hashes, bytes, sidecar, and Hefesto/Optimus incident rules.
+- [x] 2.2 Create `scripts/private-local-diagnostics-authorization-lib.mjs`; export pure parser, one-policy validator, cross-binding, canonical custody strings, and sidecar helpers—no signer, fetch, custody parser, or host-path resolution.
+- [x] 2.3 Update `scripts/private-local-diagnostics-artifact-lib.mjs` only for reusable safe helpers; prove `receipt` v1 null slots and five-file producer bytes/semantics remain unchanged in its tests.
 
 ## Phase 3: Static Verification (P2)
 

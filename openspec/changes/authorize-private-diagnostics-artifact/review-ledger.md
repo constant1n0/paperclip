@@ -186,3 +186,111 @@ This section is the authoritative scoped fix diff for re-judges; ranges refer to
 
 - Judges A and B verified P0B-JD-001/P0B-JD-002 with no new fix-line finding; both returned `JUDGMENT: APPROVED`.
 - The corrected automatic gate passed the 336-line bundle, arithmetic, branch/base, task state and no-publication checks. **P0b JUDGMENT: APPROVED**
+
+## P1 clean-room post-apply review — round 1
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| P1R-GATE-001 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.mjs:4-31,38-47`; receipt identity at `scripts/private-local-diagnostics-artifact-lib.mjs:94-101` | CRITICAL | fixed | `artifactId` now uses the receipt v1 safe-basename grammar, accepts dotted production versions, and still derives exact filenames, fixed locator, and bindings. |
+| P1R-GATE-002 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.test.mjs:39-51`; `spec.md:59` | CRITICAL | fixed | Deterministic policy coverage accepts exactly `issuedAt`, rejects one nanosecond before, and rejects exact expiry. |
+| P1R-JD-001 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.mjs:3-31` | CRITICAL | fixed | Absolute full-string matching now rejects terminal LF/CRLF in hashes, IDs, RFC3339 timestamps, and bounded references. |
+| P1R-JD-002 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.mjs:62-65` | CRITICAL | fixed | The sidecar must equal its exact constructed bytes, rejecting extra terminal newlines. |
+| P1R-JD-003 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.test.mjs:25-46` | WARNING | info | The judges identified additional non-blocking negative-coverage gaps, including nested/prototype fields, unsafe bytes, and custody/revocation values. |
+| P1R-JD-004 | judgment-day | `scripts/private-local-diagnostics-authorization-lib.mjs:25-29` | WARNING | info | Judge A noted `Date.UTC` remaps years 0000-0099. This is an exact-RFC3339 edge signal, not a confirmed blocking finding. |
+
+- Confirmed gate blockers: 2; single-judge suspects: 2; informational warnings: 2.
+- Judge A: `JUDGMENT: REJECTED`; Judge B: `JUDGMENT: APPROVED`; static automatic gate: `fail`.
+
+**P1 clean-room round 1 JUDGMENT: REJECTED**
+
+## P1 clean-room fix round 1 — authoritative scoped ranges
+
+- **P1R-GATE-001:** `scripts/private-local-diagnostics-authorization-lib.mjs:4-31,38-47`; `scripts/private-local-diagnostics-authorization-lib.test.mjs:5-46`.
+- **P1R-GATE-002:** `scripts/private-local-diagnostics-authorization-lib.test.mjs:49-52`.
+- **P1R-JD-001:** `scripts/private-local-diagnostics-authorization-lib.mjs:3-31`; `scripts/private-local-diagnostics-authorization-lib.test.mjs:43-46`.
+- **P1R-JD-002:** `scripts/private-local-diagnostics-authorization-lib.mjs:62-65`; `scripts/private-local-diagnostics-authorization-lib.test.mjs:34`.
+- Judges A and B independently verified all four fixed rows with no new fix-line finding; both returned `JUDGMENT: APPROVED`.
+- The fresh automatic gate verified all four rows, the 350-line ceiling and no-publication scope; `gate: pass`.
+- P1R-JD-003/004 remain informational and untouched.
+
+**P1 clean-room fix round 1 JUDGMENT: APPROVED**
+
+## P1 runtime finish CLI incident
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R4-001 | resilience | `gentle-ai` v2.2.0 `sdd-attempt finish`; installed `internal/cli/sdd_attempt.go:154-159` | WARNING | info | A first close command supplied unsupported `--changed-lines`; validation rejected it before opening the runtime store. The CLI measures changed lines internally. The attempt remained running at the same revision and is safe to finish without that flag. |
+
+## P1 pre-commit reliability review
+
+- Findings ledger: empty.
+- One exhaustive reliability sweep returned `PRE-COMMIT: PASS`.
+
+## P1 pre-push clean-room incident and recovery
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R1-INC-001 | risk | retired `/home/dcm/paperclip/_build-722-p1-recovery/.codegraph/` | BLOCKER | fixed | An unexpected untracked protected directory invalidated that worktree as a release candidate. The general refuter confirmed the blocker. The worktree remains untouched and retired; this release worktree was created from exact immutable commit `884a4d03a` and verified clean with `.codegraph` and `.engram` absent. |
+| R1-INC-002 | risk | retired recovery worktree pre-push attestation | WARNING | info | The earlier pre-push attestation was discarded because its worktree boundary was no longer clean. It is not release evidence. |
+| R4-002 | resilience | worktree creation command | WARNING | info | An initial `git worktree add` used the non-repository container as cwd and failed closed without mutation. The corrected command ran from a registered worktree. |
+
+- A fresh risk reviewer read `c5acc8cb2..884a4d03a` only from the `_wt-upstream` Git object store and never accessed this release worktree.
+- Valid findings ledger: empty.
+- The release worktree remained clean at `884a4d03a`, with both protected directories absent.
+
+**P1 PRE-PUSH: PASS**
+
+## P1 pre-PR full-4R review — round 1
+
+- R1 risk findings ledger: empty.
+- R3 reliability findings ledger: empty.
+- R4 resilience findings ledger: empty.
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R2-001 | readability | `scripts/private-local-diagnostics-authorization-lib.test.mjs:55-57` | CRITICAL | open | Readability reported that the final policy loop references undeclared `optimus` and `context`, which would prevent the intended Optimus cases from exercising `E_AUTH`. The committed diff visibly declares both identifiers and the focused suite passed 4/4, but all three mandatory refuter verdicts returned `stands`; under the protocol the finding remains open. |
+
+- Refuter votes: correctness `stands` (0.99); exploitability/impact `stands` (0.98); reproducibility `stands` by required inconclusive default (0.55).
+- No other full-4R finding was reported.
+
+**P1 PRE-PR: BLOCKED**
+
+## P1 pre-PR R2-001 generation-5 mechanical clarification
+
+- **Authoritative fix range:** `scripts/private-local-diagnostics-authorization-lib.test.mjs:55-68`.
+- **Before:** The Optimus fixture setup and invalid-context loop shared dense one-line statements, allowing a readability interpretation that the loop callback did not visibly bind `optimus` and `context` to the `E_AUTH` assertion.
+- **After:** `optimus`, its `Object.assign`, and the positive policy assertion are separate statements; `invalidContexts` is named; the braced loop explicitly passes `optimus` and `context` to `validateAuthorizationPolicy` inside the `E_AUTH` assertion callback.
+- **R2-001:** verified by a fresh scoped readability re-review of the authoritative range; the focused test proves all four invalid contexts reach the intended `E_AUTH` assertions.
+
+**P1 PRE-PR FIX ROUND 1: PASS**
+
+## P1 generation-5 pre-commit/pre-push review
+
+- Findings ledger: empty.
+- One exhaustive readability sweep returned `PRE-COMMIT/PRE-PUSH: PASS`.
+
+## Generation 6 scoped remediation
+
+- Greptile P2 (4/5) is fixed locally: `Date.UTC` remapped RFC3339 years `0000`–`0099`.
+- Independent R3-001 remains WARNING/info and REAL, but is currently unreachable until P2 integration.
+- Authoritative range is generation 6, ordinal 6, runtime `sha256:16e9822e40a9312ec4c81733b19074e66e5aa7576aee7f298c23a9fdc812cba6`.
+- Judge A: R3-001 verified; no new BLOCKER or CRITICAL finding in fix-touched lines.
+- Judge B: R3-001 resolved/info; no new BLOCKER or CRITICAL finding in fix-touched lines.
+- Judgment Day convergence: `JUDGMENT: APPROVED`; R3-001 is verified locally.
+- External status remains 4/5 until Greptile reviews a pushed commit; do not claim comment resolution yet.
+
+## Generation 7 incident recovery and pre-commit review
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R4-001 | resilience | `apply-progress.md:25-33` | CRITICAL | verified | A post-finish progress update made the worktree differ from generation 6's passed candidate; general refutation confirmed the release-integrity defect, and generation 7 rebound the accurate candidate with zero changed lines and equal begin/finish trees. |
+| R3-002 | reliability | `scripts/private-local-diagnostics-authorization-lib.test.mjs:69-77` | WARNING | info | Production handles year `0000`, but focused tests start at `0001`; this non-blocking lower-boundary coverage signal does not invalidate the verified fix. |
+
+- Generation 7 closed at runtime `sha256:71d5f634750a981fe1c50ff1e609658f570d199eed0679637904c9a03deba446`, evidence `sha256:43d850793de8b016cb7ce5520107650680c1da344a3b7e90b47206ed6b53213f`.
+- One exhaustive reliability sweep returned `PRE-COMMIT: PASS`; R3-002 remains information only and does not trigger a fix cycle.
+- Runtime begin revision-conflict incident audit: empty ledger; the rejected begin changed no state, so only the same begin request was replayed with the runtime-returned revision.
+
+## Generation 10 external rerun
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R3-003 | reliability | `apply-progress.md:30` | WARNING | info | Greptile reached 5/5 and the old R3-001 thread resolved; the current full P1 count is corrected locally, with external rereview and thread resolution pending. |
