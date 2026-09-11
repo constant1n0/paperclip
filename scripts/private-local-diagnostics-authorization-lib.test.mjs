@@ -65,3 +65,13 @@ test("RED contract: enforces the two exact policy pairs and nanosecond UTC inter
     assert.throws(() => auth.validateAuthorizationPolicy(optimus, context, "2026-01-01T00:00:00.000000001Z"), /E_AUTH/);
   }
 });
+
+test("RED contract: preserves RFC3339 early-year UTC intervals", () => {
+  const yearOne = evidence(); Object.assign(yearOne.grant, { issuedAt: "0001-01-01T00:00:00.000000000Z", expiresAt: "0001-01-01T00:00:00.000000002Z" });
+  assert.doesNotThrow(() => auth.parseAuthorizationEvidence(auth.canonicalJson(yearOne)));
+  assert.doesNotThrow(() => auth.validateAuthorizationPolicy(yearOne, { audience: "hefesto", caseId: "case_1" }, "0001-01-01T00:00:00.000000001Z"));
+  const boundary = evidence(); Object.assign(boundary.grant, { issuedAt: "0099-12-31T23:59:59.999999999Z", expiresAt: "0100-01-01T00:00:00.000000001Z" });
+  assert.doesNotThrow(() => auth.validateAuthorizationPolicy(boundary, { audience: "hefesto", caseId: "case_1" }, "0100-01-01T00:00:00.000000000Z"));
+  const impossible = evidence(); impossible.grant.issuedAt = "0001-02-29T00:00:00Z";
+  assert.throws(() => auth.validateAuthorizationEvidence(impossible), /E_AUTH/);
+});

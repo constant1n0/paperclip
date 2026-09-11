@@ -26,7 +26,7 @@ function timestamp(value, name) {
   if (typeof value !== "string") fail(`${name} must be UTC RFC3339`);
   const match = RFC3339_UTC.exec(value); if (!match || match.index !== 0 || match[0].length !== value.length) fail(`${name} must be UTC RFC3339`);
   const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const date = new Date(0); date.setUTCFullYear(year, month - 1, day); date.setUTCHours(hour, minute, second, 0);
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day || date.getUTCHours() !== hour || date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second) fail(`${name} is impossible`);
   return BigInt(date.getTime()) * 1000000n + BigInt((match[7] ?? "").padEnd(9, "0") || "0");
 }
