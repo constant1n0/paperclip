@@ -294,3 +294,66 @@ This section is the authoritative scoped fix diff for re-judges; ranges refer to
 | id | lens | location | severity | status | evidence |
 |---|---|---|---|---|---|
 | R3-003 | reliability | `apply-progress.md:30` | WARNING | info | Greptile reached 5/5 and the old R3-001 thread resolved; the current full P1 count is corrected locally, with external rereview and thread resolution pending. |
+
+## P2 CLI incident audit
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+
+- No findings. The failed `sdd-attempt reset --help` invocation and mistyped audit path caused no mutation; the resilience audit found no defect.
+
+## P2 post-apply review — round 1
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| P2-JD-001 | judgment-day | `scripts/private-local-diagnostics-verification-lib.mjs:103-107`; `scripts/verify-private-local-diagnostics-artifact.test.mjs:26-45` | CRITICAL | verified | Both blind judges and the independent apply gate confirmed that `existsSync()` treats a dangling canonical authorization symlink as absent, allowing unsafe evidence pathnames to bypass evidence mode and fall back to legacy verification. The same discovery/use gap can miss a pathname introduced after probing; focused tests do not cover dangling entries or deterministic replacement. |
+
+- Confirmed: 1; suspect: 0; informational: 0; contradictions: 0.
+- Fix round 1 of at most 2. Scoped re-review must receive only this ledger row and the fix diff.
+
+**P2 round 1 JUDGMENT: CHANGES_REQUIRED**
+
+### P2-JD-001 fix round 1 — authoritative range
+
+- `scripts/private-local-diagnostics-verification-lib.mjs:79-92,117-123` replaces follow-following discovery with `lstatSync` entry probes, treating only `ENOENT` as absent; it rechecks after the deterministic discovery probe and retains evidence selection if either probe sees a canonical entry.
+- `scripts/verify-private-local-diagnostics-artifact.test.mjs:38-40,49-92` freezes the base-derived legacy result, covers dangling manifest/sidecar entries, deterministic introduction/replacement, and asserts one injected-clock call in evidence mode.
+
+### P2 round 1 scoped re-review
+
+- Judges A and B independently verified `P2-JD-001`; focused verifier tests passed 6/6, authorization-contract tests 5/5, and receipt-v1 regressions 8/8.
+- The initial wildcard test invocations failed during zsh pathname expansion before execution. A fresh resilience audit returned an empty ledger, confirmed no mutation or lingering process, and accepted the later exact-path test evidence.
+- No new in-scope finding was reported. **P2 round 1 JUDGMENT: APPROVED**
+
+## P2 clean-room recovery — generation 13, ordinal 14
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| P2-GATE-002 | judgment-day | `scripts/private-local-diagnostics-verification-lib.mjs:3,66-78,127`; `scripts/verify-private-local-diagnostics-artifact.test.mjs:11,95-117` | CRITICAL | verified | Evidence-mode `hardenedSnapshot` now defaults to real Node fs and accepts an injected filesystem only for deterministic focused tests. The tests prove pre-open inode replacement, mutation during read/inspection plus final-path recheck, hardlink rejection, and non-regular-file rejection. Both scoped judges verified the clean-room fix. |
+| P2-GATE-003 | judgment-day | Result-contract handoff | WARNING | info | Resolved as an orchestration-only handoff issue after complete Result Contracts were supplied; no code change. |
+| R1-INC-001 | risk | quarantined contaminated worktree | BLOCKER | verified | The contaminated worktree is quarantined and was not reused; a fresh risk audit certified that this recovery candidate was reconstructed exactly from sealed tree `4432a23831ade0d124bd3f35928a92f5ae1329f5`. |
+| R1-INC-002 | risk | runtime generation 13 | CRITICAL | verified | Ordinal 13 closed failed/invalidated; a fresh risk audit verified that ordinal 14 starts from the trusted sealed tree. |
+
+- Judges A and B independently returned `P2-GATE-002: verified` and `JUDGMENT: APPROVED` after reviewing only the 56-line clean-room fix diff.
+- Focused verifier tests passed 7/7; authorization-contract tests passed 5/5; receipt-v1 regressions passed 8/8. No further fix round remains or is required.
+
+## P2 pre-commit risk review
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R1-P2-001 | risk | `scripts/private-local-diagnostics-verification-lib.mjs:69-74` | CRITICAL | verified | `openSync()` uses `O_RDONLY | O_NOFOLLOW` without `O_NONBLOCK`. A regular pathname replaced by a FIFO after `lstatSync()` can block indefinitely before `fstatSync()` runs. The single general refuter confirmed the Linux/Node behavior and that existing injected-fs coverage cannot reproduce this window. |
+
+- Standard pre-commit review: `PRE-COMMIT: FAIL`; general refuter verdict: `stands` with confidence 0.99.
+
+### R1-P2-001 fix — authoritative range and evidence
+
+- **Range:** `scripts/private-local-diagnostics-verification-lib.mjs:69-75`; `scripts/verify-private-local-diagnostics-artifact.test.mjs:95-121`.
+- **RED:** the exact focused verifier test failed before the production change because a replacement FIFO descriptor reached the later inspection error instead of immediate post-open rejection.
+- **GREEN:** the deterministic injected-filesystem test asserts `O_NOFOLLOW | O_NONBLOCK`, rejects the post-open non-regular descriptor before read, and the focused verifier passes 7/7; legacy `snapshot()` is unchanged.
+- Fresh scoped risk re-review verified `R1-P2-001` and returned `PRE-COMMIT: PASS`; authorization-contract tests passed 5/5 and receipt-v1 regressions passed 8/8.
+
+## P2 pre-push risk review
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+
+- Empty ledger: one exhaustive standard risk sweep returned `PRE-PUSH: PASS`; all 25 focused tests, both syntax checks, and `git diff --check` passed on the reviewed 261-line candidate.

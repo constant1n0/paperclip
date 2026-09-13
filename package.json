@@ -2,6 +2,7 @@
   "name": "paperclip",
   "private": true,
   "type": "module",
+  "privateDiagnosticsArtifactVerification": "CLI accepts legacy --artifact-dir ABSOLUTE_DIR --receipt SAFE_RECEIPT_BASENAME or complete unsigned evidence context (--audience, --case-id, and Optimus-only --incident-id). --require-authorized, duplicate, and unknown inputs are rejected. Evidence results report authorizationEvidence: unsigned only; this is not authenticated authorization or human approval.",
   "scripts": {
     "postinstall": "node scripts/link-plugin-dev-sdk.mjs",
     "preflight:workspace-links": "node cli/node_modules/tsx/dist/cli.mjs scripts/ensure-workspace-package-links.ts",

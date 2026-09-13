@@ -41,9 +41,9 @@ Retain every branch; each merge needs separate owner authorization. Do not begin
 
 ## Phase 3: Static Verification (P2)
 
-- [ ] 3.1 RED: extend `scripts/verify-private-local-diagnostics-artifact.test.mjs` for exact legacy result, partial/context-only rejection, replay, interval boundaries, independent inspection, and malicious archive non-execution.
-- [ ] 3.2 Update `scripts/private-local-diagnostics-verification-lib.mjs` and `scripts/verify-private-local-diagnostics-artifact.mjs` for exact legacy grammar or complete evidence mode; leave legacy `snapshot()` byte-for-byte/behaviorally unchanged, while evidence mode uses a separate hardened snapshot/recheck helper for every inspected file; capture `clock` once and return only `authorizationEvidence: "unsigned"` with matched context.
-- [ ] 3.3 Update `package.json` CLI/result documentation; reject `--require-authorized`, unknown/duplicate inputs, and all authenticated-authorization claims.
+- [x] 3.1 RED: extend `scripts/verify-private-local-diagnostics-artifact.test.mjs` for exact legacy result, partial/context-only rejection, replay, interval boundaries, independent inspection, and malicious archive non-execution.
+- [x] 3.2 Update `scripts/private-local-diagnostics-verification-lib.mjs` and `scripts/verify-private-local-diagnostics-artifact.mjs` for exact legacy grammar or complete evidence mode; leave legacy `snapshot()` byte-for-byte/behaviorally unchanged, while evidence mode uses a separate hardened snapshot/recheck helper for every inspected file; capture `clock` once and return only `authorizationEvidence: "unsigned"` with matched context.
+- [x] 3.3 Update `package.json` CLI/result documentation; reject `--require-authorized`, unknown/duplicate inputs, and all authenticated-authorization claims.
 
 ## Phase 4: HUMAN-OPS Boundary (P3)
 
