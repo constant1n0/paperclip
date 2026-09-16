@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { isAbsolute, join } from "node:path";
 import { ARCHIVE_LIMITS, inspectStaticArchive } from "./private-local-diagnostics-archive.mjs";
 import { canonicalJson, parseReceiptSidecar, validateReceipt } from "./private-local-diagnostics-artifact-lib.mjs";
+import { crossBindAuthorization, parseAuthorizationEvidence, parseAuthorizationSidecar, validateAuthorizationPolicy } from "./private-local-diagnostics-authorization-lib.mjs";
 const HASH = /^[0-9a-f]{64}$/;
 const ID = /^paperclipai-local-diagnostics-[a-z0-9.-]+$/;
 const DIST = ["dist/index.js", "dist/local-diagnostics.js"];
@@ -41,8 +42,25 @@ export function parseVerificationSidecar(text, filename) {
 }
 
 export function parseVerificationArgs(argv) {
-  if (!Array.isArray(argv) || argv.length !== 4 || argv[0] !== "--artifact-dir" || argv[2] !== "--receipt" || !isAbsolute(argv[1])) fail("expected --artifact-dir ABSOLUTE_DIR --receipt SAFE_RECEIPT_BASENAME");
-  return { artifactDir: argv[1], receipt: name(argv[3], "receipt filename") };
+  if (!Array.isArray(argv) || argv.length < 4 || argv[0] !== "--artifact-dir" || argv[2] !== "--receipt" || !isAbsolute(argv[1])) fail("expected --artifact-dir ABSOLUTE_DIR --receipt SAFE_RECEIPT_BASENAME");
+  return { artifactDir: argv[1], receipt: name(argv[3], "receipt filename"), contextArgs: argv.slice(4) };
+}
+const failAuth = (message) => { throw new Error(`E_AUTH: ${message}`); };
+const CONTEXT_FLAGS = { "--audience": "audience", "--case-id": "caseId", "--incident-id": "incidentId" };
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const safeId = (value, label) => { if (typeof value !== "string" || !SAFE_ID.test(value)) failAuth(`${label} must be a SAFE_ID`); return value; };
+function parseEvidenceContext(tail) {
+  if (tail.length === 0 || tail.length % 2 !== 0) failAuth("expected --audience A --case-id ID [--incident-id ID]");
+  const seen = {};
+  for (let index = 0; index < tail.length; index += 2) {
+    const key = CONTEXT_FLAGS[tail[index]];
+    if (!key || typeof tail[index + 1] !== "string") failAuth("unexpected authorization evidence argument");
+    if (Object.hasOwn(seen, key)) failAuth(`duplicate ${tail[index]}`);
+    seen[key] = tail[index + 1];
+  }
+  if (seen.audience === "hefesto") { if (Object.hasOwn(seen, "incidentId")) failAuth("hefesto context must not include --incident-id"); return { audience: "hefesto", caseId: safeId(seen.caseId, "--case-id") }; }
+  if (seen.audience === "optimus") { const caseId = safeId(seen.caseId, "--case-id"), incidentId = safeId(seen.incidentId, "--incident-id"); if (incidentId === caseId) failAuth("--incident-id must differ from --case-id"); return { audience: "optimus", caseId, incidentId }; }
+  return failAuth("expected --audience hefesto or --audience optimus");
 }
 function snapshot(file, limit) {
   let fd;
@@ -62,7 +80,7 @@ function canonical(bytes, label) {
   if (!Buffer.from(canonicalJson(value)).equals(bytes)) fail(`${label} is non-canonical`);
   return value;
 }
-export async function verifyArtifact(input, dependencies = {}) {
+async function verifyLegacyUnpinned(input, dependencies = {}) {
   const { artifactDir, receipt: receiptName } = parseVerificationArgs(input);
   if (lstatSync(artifactDir).isSymbolicLink() || !lstatSync(artifactDir).isDirectory()) fail("artifact directory is unsafe");
   const dir = realpathSync(artifactDir), receiptBytes = snapshot(join(dir, receiptName), 65536);
@@ -81,7 +99,7 @@ export async function verifyArtifact(input, dependencies = {}) {
   return { state: "staged", smoke: "not-run-untrusted", artifactId: receipt.artifactId, artifactSha256: receipt.artifact.sha256, receiptSha256, verificationSha256, manifestSha256: archive.package.manifestSha256 };
 }
 
-// Linux-pinned directory primitives (not yet wired into verifyArtifact/parseVerificationArgs dispatch).
+// Linux-pinned directory primitives, wired into verifyArtifact's mode/evidence dispatch below.
 const failCapability = () => { throw new Error("V_CAPABILITY: evidence verification requires Linux with usable /proc/self/fd"); };
 const failDirectory = () => { throw new Error("V_DIRECTORY: artifact directory is unsafe"); };
 const failRace = () => { throw new Error("V_RACE: inspection bundle changed during verification"); };
@@ -170,7 +188,7 @@ function readPinnedChild(pinned, entry, fs) {
     if (opened.dev !== before.dev || opened.ino !== before.ino || opened.nlink !== 1n) failRace();
     const bytes = fs.readFileSync(fd), after = fs.fstatSync(fd, { bigint: true });
     if (BigInt(bytes.length) !== before.size || after.size !== before.size || after.nlink !== 1n) failRace();
-    return { basename: entry.basename, limit: entry.limit, fd, dev: opened.dev, ino: opened.ino, nlink: 1n, size: after.size, mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs, sha256: digest(bytes) };
+    return { basename: entry.basename, limit: entry.limit, fd, dev: opened.dev, ino: opened.ino, nlink: 1n, size: after.size, mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs, sha256: digest(bytes), content: bytes };
   } catch (error) {
     closeQuietly(fs, fd);
     if (error instanceof Error && /^V_/.test(error.message)) throw error;
@@ -216,6 +234,7 @@ export function verifyPinnedDirectory(path, entries, options = {}) {
     const presence = entries.map((entry) => ({ entry, present: classifyBasename(pinned, entry.basename, fs) }));
     checkpoint("classified");
     for (const { entry, present } of presence) if (present) { children.push(readPinnedChild(pinned, entry, fs)); checkpoint(`read:${entry.basename}`); }
+    if (options.afterRead) options.afterRead(children, fs);
     checkpoint("step1-complete");
     const recheck = () => {
       if (!sameStamp(captureDirectoryStamp(pinned, fs), stamp)) failRace();
@@ -239,4 +258,78 @@ export function verifyPinnedDirectory(path, entries, options = {}) {
   if (failed) throw primaryError;
   if (closeError) throw closeError;
   return result;
+}
+
+// Mode/evidence dispatch: activates evidence mode via the canonical authorization pathname or any
+// --audience/--case-id/--incident-id argument; otherwise the frozen four-argument legacy grammar applies.
+const RECEIPT_SUFFIX = ".receipt.json";
+const deriveArtifactId = (receiptName) => { if (!receiptName.endsWith(RECEIPT_SUFFIX)) fail("expected --artifact-dir ABSOLUTE_DIR --receipt SAFE_RECEIPT_BASENAME"); return receiptName.slice(0, -RECEIPT_SUFFIX.length); };
+const findChild = (children, basename) => children.find((child) => child.basename === basename);
+const requireChild = (children, basename, label) => { const child = findChild(children, basename); if (!child) fail(`${label} is unsafe or absent`); return child; };
+
+function buildPinnedResult(children, receiptName, verificationName, authorizationName, context, dependencies) {
+  const receiptChild = requireChild(children, receiptName, "receipt");
+  const receipt = validateReceipt(canonical(receiptChild.content, "receipt"));
+  if (receiptName !== `${receipt.artifactId}.receipt.json`) fail("receipt filename mismatch");
+  const receiptSidecarChild = requireChild(children, `${receipt.artifactId}.receipt.sha256`, "receipt sidecar");
+  if (parseReceiptSidecar(receiptSidecarChild.content.toString("utf8"), receiptName).sha256 !== receiptChild.sha256) fail("receipt sidecar mismatch");
+
+  const verificationChild = requireChild(children, verificationName, "verification manifest");
+  const verification = validateVerificationManifest(canonical(verificationChild.content, "verification manifest"));
+  const verificationSidecarChild = requireChild(children, `${receipt.artifactId}.verification.sha256`, "verification sidecar");
+  if (parseVerificationSidecar(verificationSidecarChild.content.toString("utf8"), verificationName).sha256 !== verificationChild.sha256) fail("verification sidecar mismatch");
+  if (canonicalJson(verification.receipt) !== canonicalJson({ filename: receiptName, sha256: receiptChild.sha256 }) || canonicalJson(verification.artifact) !== canonicalJson(receipt.artifact) || verification.package.manifestSha256 !== receipt.package.manifestSha256 || digest(canonicalJson(verification.package.distFiles)) !== receipt.package.distSha256) fail("receipt cross-bind mismatch");
+
+  const artifactChild = requireChild(children, receipt.artifact.filename, "artifact archive");
+  if (BigInt(artifactChild.content.length) !== BigInt(receipt.artifact.bytes) || artifactChild.sha256 !== receipt.artifact.sha256) fail("artifact bytes mismatch");
+  const archive = (dependencies.inspectStaticArchive ?? inspectStaticArchive)(artifactChild.content, { expectedDistSha256: verification.package.distFiles, expectedManifestSha256: verification.package.manifestSha256, expectedArtifactSha256: receipt.artifact.sha256 }, dependencies.archiveOptions);
+  const base = { state: "staged", smoke: "not-run-untrusted", artifactId: receipt.artifactId, artifactSha256: receipt.artifact.sha256, receiptSha256: receiptChild.sha256, verificationSha256: verificationChild.sha256, manifestSha256: archive.package.manifestSha256 };
+
+  const authorizationManifestChild = findChild(children, authorizationName), authorizationSidecarChild = findChild(children, `${authorizationName}.sha256`);
+  const pairPresent = (authorizationManifestChild ? 1 : 0) + (authorizationSidecarChild ? 1 : 0);
+  if (pairPresent === 0 && context === null) return base;
+  if (pairPresent < 2 || context === null) failAuth("complete authorization evidence pair and context are required");
+
+  const authorization = parseAuthorizationEvidence(authorizationManifestChild.content.toString("utf8"));
+  if (parseAuthorizationSidecar(authorizationSidecarChild.content.toString("utf8"), receipt.artifactId).sha256 !== authorizationManifestChild.sha256) failAuth("authorization sidecar mismatch");
+  crossBindAuthorization(authorization, { artifactId: receipt.artifactId, receipt: { filename: receiptName, sha256: receiptChild.sha256 }, verification: { filename: verificationName, sha256: verificationChild.sha256 }, artifact: receipt.artifact });
+  validateAuthorizationPolicy(authorization, context, (dependencies.clock ?? (() => new Date().toISOString()))());
+  return { ...base, authorizationEvidence: "unsigned", authorizationEvidenceSha256: authorizationManifestChild.sha256, revocation: "unverified", audience: authorization.grant.audience.principal, mode: authorization.grant.audience.mode, caseId: authorization.grant.caseId, incidentId: authorization.grant.incidentId };
+}
+
+function verifyPinnedArtifact(parsed, context, dependencies) {
+  const { artifactDir, receipt: receiptName } = parsed, artifactIdGuess = deriveArtifactId(receiptName);
+  const verificationName = `${artifactIdGuess}.verification.json`, authorizationName = `${artifactIdGuess}.authorization.json`;
+  const entries = [
+    { basename: receiptName, limit: 65536 }, { basename: `${artifactIdGuess}.receipt.sha256`, limit: 1024 },
+    { basename: verificationName, limit: 65536 }, { basename: `${artifactIdGuess}.verification.sha256`, limit: 1024 },
+    { basename: authorizationName, limit: 65536 }, { basename: `${authorizationName}.sha256`, limit: 1024 },
+    { basename: `${artifactIdGuess}.tgz`, limit: ARCHIVE_LIMITS.compressed },
+  ];
+  let outcome;
+  verifyPinnedDirectory(artifactDir, entries, { fs: dependencies.fs, onCheckpoint: dependencies.onCheckpoint, afterRead: (children) => { outcome = buildPinnedResult(children, receiptName, verificationName, authorizationName, context, dependencies); } });
+  return outcome;
+}
+
+function probeEvidencePresence(artifactDir, receiptName, fs) {
+  let artifactIdGuess;
+  try { artifactIdGuess = deriveArtifactId(receiptName); } catch { return false; }
+  const manifestPath = join(artifactDir, `${artifactIdGuess}.authorization.json`);
+  const probe = (path) => { try { fs.lstatSync(path); return true; } catch (error) { if (error && error.code === "ENOENT") return false; throw error; } };
+  return probe(manifestPath) || probe(`${manifestPath}.sha256`);
+}
+
+async function verifyUnsupportedArtifact(parsed, dependencies) {
+  const fs = dependencies.fs ?? pinnedFs;
+  if (probeEvidencePresence(parsed.artifactDir, parsed.receipt, fs)) failCapability();
+  const result = await verifyLegacyUnpinned(["--artifact-dir", parsed.artifactDir, "--receipt", parsed.receipt], dependencies);
+  if (probeEvidencePresence(parsed.artifactDir, parsed.receipt, fs)) failCapability();
+  return result;
+}
+
+export async function verifyArtifact(input, dependencies = {}) {
+  const parsed = parseVerificationArgs(input), capabilityOptions = { platform: dependencies.platform, fs: dependencies.fs };
+  if (parsed.contextArgs.length > 0) { requirePinnedDirectoryCapability(capabilityOptions); return verifyPinnedArtifact(parsed, parseEvidenceContext(parsed.contextArgs), dependencies); }
+  if (!detectPinnedDirectoryCapability(capabilityOptions)) return verifyUnsupportedArtifact(parsed, dependencies);
+  return verifyPinnedArtifact(parsed, null, dependencies);
 }
