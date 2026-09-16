@@ -85,8 +85,8 @@ export async function verifyArtifact(input, dependencies = {}) {
 const failCapability = () => { throw new Error("V_CAPABILITY: evidence verification requires Linux with usable /proc/self/fd"); };
 const failDirectory = () => { throw new Error("V_DIRECTORY: artifact directory is unsafe"); };
 const failRace = () => { throw new Error("V_RACE: inspection bundle changed during verification"); };
-const RAW_ERRNO = new Set(["EMFILE", "ENFILE", "EIO", "ENOMEM"]);
-const classify = (error, failer) => { if (error && RAW_ERRNO.has(error.code)) throw error; failer(); };
+const MAPPED_ERRNO = new Set(["ENOENT", "ENOTDIR", "ELOOP", "EACCES"]);
+const classify = (error, failer) => { if (error && MAPPED_ERRNO.has(error.code)) failer(); else throw error; };
 const procFd = (fd) => `/proc/self/fd/${fd}`;
 const childPath = (pinned, basename) => `${procFd(pinned.fd)}/${basename}`;
 const pinnedFs = { openSync, fstatSync, statSync, lstatSync, closeSync, readFileSync, readSync, realpathSync };

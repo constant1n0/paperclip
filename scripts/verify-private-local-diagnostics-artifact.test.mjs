@@ -268,3 +268,43 @@ test("a close failure during cleanup never masks a propagating V_RACE, and every
     assert.equal(attempts.length, 3);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("an EACCES on a step-2/4 lookup for an entry recorded present is a race", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pinned-eacces-"));
+  writeFileSync(join(dir, "present.json"), "{}");
+  const entries = [{ basename: "present.json", limit: 4096 }];
+  let fail = false;
+  const seam = { ...fsReal, lstatSync: (p, o) => { if (fail && p.endsWith("/present.json")) throw Object.assign(new Error("denied"), { code: "EACCES" }); return fsReal.lstatSync(p, o); } };
+  try { assert.throws(() => verifyPinnedDirectory(dir, entries, { fs: seam, onCheckpoint: (pt) => { if (pt === "step1-complete") fail = true; } }), /V_RACE: inspection bundle changed during verification/); }
+  finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("ENOTDIR and ELOOP on the alias reopen (step 3) are V_DIRECTORY", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pinned-alias-errno-"));
+  writeFileSync(join(dir, "present.json"), "{}");
+  const entries = [{ basename: "present.json", limit: 4096 }];
+  try {
+    for (const code of ["ENOTDIR", "ELOOP"]) {
+      let calls = 0;
+      const seam = { ...fsReal, openSync: (p, f) => { if (p === dir && calls++ === 1) throw Object.assign(new Error(code), { code }); return fsReal.openSync(p, f); } };
+      assert.throws(() => verifyPinnedDirectory(dir, entries, { fs: seam }), /V_DIRECTORY: artifact directory is unsafe/);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a non-allowlisted errno (EPERM/EROFS) on a lookup propagates unchanged, and EBADF on a held-descriptor fstat propagates unchanged", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pinned-unmapped-"));
+  writeFileSync(join(dir, "present.json"), "{}");
+  const entries = [{ basename: "present.json", limit: 4096 }];
+  try {
+    for (const code of ["EPERM", "EROFS"]) {
+      const raw = Object.assign(new Error("blocked"), { code });
+      const seam = { ...fsReal, lstatSync: (p, o) => (p.endsWith("/present.json") ? (() => { throw raw; })() : fsReal.lstatSync(p, o)) };
+      assert.throws(() => verifyPinnedDirectory(dir, entries, { fs: seam }), (error) => error === raw);
+    }
+    const raw = Object.assign(new Error("bad fd"), { code: "EBADF" });
+    let calls = 0;
+    const seam = { ...fsReal, fstatSync: (fd, o) => (o?.bigint && calls++ === 1 ? (() => { throw raw; })() : fsReal.fstatSync(fd, o)) };
+    assert.throws(() => verifyPinnedDirectory(dir, entries, { fs: seam }), (error) => error === raw);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
