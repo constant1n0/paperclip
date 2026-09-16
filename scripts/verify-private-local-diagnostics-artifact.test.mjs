@@ -7,12 +7,25 @@ import { test } from "node:test";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { canonicalJson, createReceipt, formatReceiptSidecar } from "./private-local-diagnostics-artifact-lib.mjs";
+import { CUSTODY_ROOT, formatAuthorizationSidecar } from "./private-local-diagnostics-authorization-lib.mjs";
 import { acquirePinnedDirectory, createVerificationManifest, detectPinnedDirectoryCapability, formatVerificationSidecar, parseVerificationArgs, proveDirectoryAlias, requirePinnedDirectoryCapability, verifyArtifact, verifyPinnedDirectory } from "./private-local-diagnostics-verification-lib.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex"), commit = "c".repeat(40), bin = { paperclipai: "./dist/index.js", "paperclipai-local-diagnostics": "./dist/local-diagnostics.js" };
 const fsReal = { openSync, fstatSync, statSync, lstatSync, closeSync, readFileSync, readSync, realpathSync };
 function fixture({ malicious = false, index = "#!/usr/bin/env node\n" } = {}) { const root = mkdtempSync(join(tmpdir(), "verify-")), dir = join(root, "stage"), payload = join(root, "package"), dist = join(payload, "dist"), sentinel = join(root, "sentinel"), manifest = { name: "paperclipai", version: "0.3.1", description: "Paperclip CLI", main: "./dist/index.js", files: ["dist", "README.md"], bin }; mkdirSync(dir); mkdirSync(dist, { recursive: true }); const diagnostic = malicious ? `#!/usr/bin/env node\nimport{writeFileSync}from"node:fs";writeFileSync(${JSON.stringify(sentinel)},"executed")` : "#!/usr/bin/env node\nprocess.stdout.write('{}\\n')"; for (const [name, bytes] of [["README.md", "readme\n"], ["package.json", JSON.stringify(manifest)], ["dist/index.js", index], ["dist/index.js.map", "{}"], ["dist/local-diagnostics.js", diagnostic]]) writeFileSync(join(payload, name), bytes); chmodSync(join(dist, "index.js"), 0o755); chmodSync(join(dist, "local-diagnostics.js"), 0o755); const tarball = join(dir, "artifact.tgz"); execFileSync("tar", ["-czf", tarball, "-C", root, "package/README.md", "package/package.json", "package/dist/index.js", "package/dist/index.js.map", "package/dist/local-diagnostics.js"]); const artifact = readFileSync(tarball), distFiles = { "dist/index.js": digest(readFileSync(join(dist, "index.js"))), "dist/local-diagnostics.js": digest(readFileSync(join(dist, "local-diagnostics.js"))) }, receipt = createReceipt({ source: { remote: "git@github.com:constant1n0/paperclip.git", ref: "refs/remotes/fork/master", commit, tree: "d".repeat(40) }, build: { nodeVersion: "v22.23.2", pnpmVersion: "9.15.4", lockSha256: "e".repeat(64), acpxPatchSha256: "f".repeat(64) }, package: { name: "paperclipai", version: "0.3.1", bins: bin, allowlist: ["README.md", "dist/index.js", "dist/index.js.map", "dist/local-diagnostics.js", "package.json"], distSha256: digest(canonicalJson(distFiles)), manifestSha256: digest(readFileSync(join(payload, "package.json"))) }, artifact: { bytes: artifact.length, sha256: digest(artifact) }, diagnostics: { command: "paperclipai-local-diagnostics", version: "0.3.1", commit }, authorization: null, storage: null, signature: null }), receiptName = `${receipt.artifactId}.receipt.json`, receiptBytes = Buffer.from(canonicalJson(receipt)), verificationName = `${receipt.artifactId}.verification.json`, verificationBytes = Buffer.from(canonicalJson(createVerificationManifest({ artifactId: receipt.artifactId, receipt: { filename: receiptName, sha256: digest(receiptBytes) }, artifact: receipt.artifact, package: { manifestSha256: receipt.package.manifestSha256, distFiles } }))); renameSync(tarball, join(dir, receipt.artifact.filename)); for (const [name, bytes] of [[receiptName, receiptBytes], [`${receipt.artifactId}.receipt.sha256`, formatReceiptSidecar(receiptName, digest(receiptBytes))], [verificationName, verificationBytes], [`${receipt.artifactId}.verification.sha256`, formatVerificationSidecar(verificationName, digest(verificationBytes))]]) writeFileSync(join(dir, name), bytes); return { root, dir, receipt, receiptName, verificationName, sentinel }; }
 const args = (f) => ["--artifact-dir", f.dir, "--receipt", f.receiptName];
+function authFixture(f, { audience = "hefesto", caseId = "CASE1", incidentId = null, issuedAt = "2026-01-01T00:00:00Z", expiresAt = "2099-01-01T00:00:00Z" } = {}) {
+  const evidence = { schemaVersion: 1, artifactId: f.receipt.artifactId, receipt: { filename: f.receiptName, sha256: digest(readFileSync(join(f.dir, f.receiptName))) }, verification: { filename: f.verificationName, sha256: digest(readFileSync(join(f.dir, f.verificationName))) }, artifact: { filename: f.receipt.artifact.filename, sha256: f.receipt.artifact.sha256, bytes: f.receipt.artifact.bytes }, storage: { custodyRoot: CUSTODY_ROOT, locator: `${CUSTODY_ROOT}/${f.receipt.artifactId}` }, grant: { ownerAuthorizationRef: "REF-1", caseId, incidentId, audience: { principal: audience, mode: audience === "hefesto" ? "normal" : "break-glass" }, issuedAt, expiresAt }, revocation: { status: "unverified", reference: "REF-REV-1" }, signature: null };
+  return writeAuthFixture(f, evidence);
+}
+function writeAuthFixture(f, evidence) {
+  const name = `${f.receipt.artifactId}.authorization.json`, bytes = Buffer.from(canonicalJson(evidence));
+  writeFileSync(join(f.dir, name), bytes);
+  writeFileSync(join(f.dir, `${name}.sha256`), formatAuthorizationSidecar(f.receipt.artifactId, digest(bytes)));
+  return evidence;
+}
+const hefesto = (f, extra = {}) => authFixture(f, { audience: "hefesto", caseId: "CASE1", ...extra });
+const optimus = (f, extra = {}) => authFixture(f, { audience: "optimus", caseId: "CASE1", incidentId: "INC1", ...extra });
 
 test("validates benign and malicious five-file sets without executing archive-controlled JS", async () => { for (const malicious of [false, true]) { const f = fixture({ malicious }); try { const value = await verifyArtifact(args(f)); assert.equal(value.state, "staged"); assert.equal(value.smoke, "not-run-untrusted"); assert.equal(existsSync(f.sentinel), false); } finally { rmSync(f.root, { recursive: true, force: true }); } } });
 test("rejects static archive, package, bin, shebang, receipt-diagnostic, and argument deviations without smoke", async () => { for (const value of [[], ["--artifact-dir", "/x", "--receipt", "../x"], ["--require-authorized"]]) assert.throws(() => parseVerificationArgs(value), /V_/); const bad = fixture({ index: "x" }); try { await assert.rejects(verifyArtifact(args(bad)), /A_EXEC/); assert.equal(existsSync(bad.sentinel), false); } finally { rmSync(bad.root, { recursive: true, force: true }); } const f = fixture(); try { const receiptPath = join(f.dir, f.receiptName), original = readFileSync(receiptPath), receipt = JSON.parse(original); receipt.diagnostics.commit = "a".repeat(40); writeFileSync(receiptPath, canonicalJson(receipt)); await assert.rejects(verifyArtifact(args(f)), /E_RECEIPT/); writeFileSync(receiptPath, original); rmSync(join(f.dir, f.receipt.artifact.filename)); symlinkSync("/etc/passwd", join(f.dir, f.receipt.artifact.filename)); await assert.rejects(verifyArtifact(args(f)), /V_/); } finally { rmSync(f.root, { recursive: true, force: true }); } });
@@ -292,6 +305,18 @@ test("ENOTDIR and ELOOP on the alias reopen (step 3) are V_DIRECTORY", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("recheckPinnedChild's own child binding catches a same-A rename-replacement between steps 3 and 4 even when the directory stamp is kept frozen through the fs seam", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pinned-child-binding-"));
+  writeFileSync(join(dir, "present.json"), '{"n":"present.json"}');
+  const entries = [{ basename: "present.json", limit: 4096 }];
+  const dirStampCache = new Map();
+  const frozenFs = { ...fsReal, fstatSync: (fd, o) => { if (o?.bigint && !dirStampCache.has(fd)) dirStampCache.set(fd, fsReal.fstatSync(fd, o)); return dirStampCache.has(fd) ? dirStampCache.get(fd) : fsReal.fstatSync(fd, o); } };
+  const replace = (point) => { if (point === "step3-complete") { writeFileSync(join(dir, "present.json.new"), '{"n":"REPLACED"}'); renameSync(join(dir, "present.json.new"), join(dir, "present.json")); } };
+  try {
+    assert.throws(() => verifyPinnedDirectory(dir, entries, { fs: frozenFs, onCheckpoint: replace }), /V_RACE: inspection bundle changed during verification/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a non-allowlisted errno (EPERM/EROFS) on a lookup propagates unchanged, and EBADF on a held-descriptor fstat propagates unchanged", () => {
   const dir = mkdtempSync(join(tmpdir(), "pinned-unmapped-"));
   writeFileSync(join(dir, "present.json"), "{}");
@@ -307,4 +332,135 @@ test("a non-allowlisted errno (EPERM/EROFS) on a lookup propagates unchanged, an
     const seam = { ...fsReal, fstatSync: (fd, o) => (o?.bigint && calls++ === 1 ? (() => { throw raw; })() : fsReal.fstatSync(fd, o)) };
     assert.throws(() => verifyPinnedDirectory(dir, entries, { fs: seam }), (error) => error === raw);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Unit 2: mode/evidence dispatch (tasks 2.1-2.9).
+
+test("evidence-context CLI grammar fails closed with E_AUTH for missing, duplicate, unexpected, and mismatched audience/case/incident arguments, regardless of pair presence", async () => {
+  const f = fixture();
+  const bad = [
+    ["--audience", "hefesto", "--case-id", "CASE1", "--incident-id", "INC1"],
+    ["--audience", "optimus", "--case-id", "CASE1"],
+    ["--audience", "optimus", "--case-id", "CASE1", "--incident-id", "CASE1"],
+    ["--case-id", "CASE1"],
+    ["--audience", "hefesto", "--case-id", "CASE1", "--case-id", "CASE2"],
+    ["--audience", "hefesto", "--foo", "bar"],
+    ["--audience", "klingon", "--case-id", "CASE1"],
+  ];
+  try { for (const extra of bad) await assert.rejects(verifyArtifact([...args(f), ...extra]), /E_AUTH/); } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a canonical authorization pair present in the pinned directory activates evidence mode even without CLI context, and a partial pair also fails closed", async () => {
+  const f = fixture();
+  try {
+    hefesto(f);
+    await assert.rejects(verifyArtifact(args(f)), /E_AUTH/);
+    rmSync(join(f.dir, `${f.receipt.artifactId}.authorization.json.sha256`));
+    await assert.rejects(verifyArtifact(args(f)), /E_AUTH/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an authorization pair appearing or disappearing between step 1's classification and the anchored rechecks is a race, not a silently accepted mode change", async () => {
+  const appear = fixture();
+  try {
+    await assert.rejects(verifyArtifact(args(appear), { onCheckpoint: (point) => { if (point === "step1-complete") hefesto(appear); } }), /V_RACE: inspection bundle changed during verification/);
+  } finally { rmSync(appear.root, { recursive: true, force: true }); }
+  const vanish = fixture();
+  try {
+    hefesto(vanish);
+    const authName = `${vanish.receipt.artifactId}.authorization.json`;
+    await assert.rejects(verifyArtifact([...args(vanish), "--audience", "hefesto", "--case-id", "CASE1"], { onCheckpoint: (point) => { if (point === "step1-complete") { rmSync(join(vanish.dir, authName)); rmSync(join(vanish.dir, `${authName}.sha256`)); } } }), /V_RACE: inspection bundle changed during verification/);
+  } finally { rmSync(vanish.root, { recursive: true, force: true }); }
+});
+
+test("complete Hefesto and Optimus evidence with matching context is accepted, returning unsigned structural evidence with the matched caseId/incidentId", async () => {
+  for (const build of [hefesto, optimus]) {
+    const f = fixture();
+    try {
+      const evidence = build(f);
+      const extra = evidence.grant.audience.principal === "hefesto" ? ["--audience", "hefesto", "--case-id", "CASE1"] : ["--audience", "optimus", "--case-id", "CASE1", "--incident-id", "INC1"];
+      const value = await verifyArtifact([...args(f), ...extra]);
+      assert.equal(value.state, "staged");
+      assert.equal(value.smoke, "not-run-untrusted");
+      assert.equal(value.authorizationEvidence, "unsigned");
+      assert.equal(value.revocation, "unverified");
+      assert.equal(value.audience, evidence.grant.audience.principal);
+      assert.equal(value.caseId, "CASE1");
+      assert.equal(value.incidentId, evidence.grant.incidentId);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("mismatched case/incident context, a tampered declarative storage locator, and a tampered cross-binding digest are all rejected with E_AUTH", async () => {
+  const cases = [
+    { extra: ["--audience", "hefesto", "--case-id", "CASE-OTHER"], tamper: (e) => e },
+    { extra: ["--audience", "hefesto", "--case-id", "CASE1"], tamper: (e) => ({ ...e, storage: { ...e.storage, locator: `${e.storage.custodyRoot}/other-id` } }) },
+    { extra: ["--audience", "hefesto", "--case-id", "CASE1"], tamper: (e) => ({ ...e, artifact: { ...e.artifact, sha256: "0".repeat(64) } }) },
+  ];
+  for (const { extra, tamper } of cases) {
+    const f = fixture();
+    try {
+      const evidence = hefesto(f);
+      writeAuthFixture(f, tamper(evidence));
+      await assert.rejects(verifyArtifact([...args(f), ...extra]), /E_AUTH/);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("evidence issued in the future or already expired is rejected using the single captured verification instant", async () => {
+  for (const window of [{ issuedAt: "2099-01-01T00:00:00Z", expiresAt: "2100-01-01T00:00:00Z" }, { issuedAt: "2000-01-01T00:00:00Z", expiresAt: "2000-02-01T00:00:00Z" }]) {
+    const f = fixture();
+    try {
+      hefesto(f, window);
+      await assert.rejects(verifyArtifact([...args(f), "--audience", "hefesto", "--case-id", "CASE1"]), /E_AUTH/);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("non-Linux or missing/restricted procfs with any evidence-context input fails closed with V_CAPABILITY immediately, and with no context but observable (complete or partial) evidence never interprets it, while reliably absent evidence still runs the exact legacy result", async () => {
+  const withContext = fixture();
+  try {
+    for (const capability of [{ platform: "darwin" }, { platform: "linux", fs: { statSync: () => { throw new Error("boom"); } } }]) await assert.rejects(verifyArtifact([...args(withContext), "--audience", "hefesto", "--case-id", "CASE1"], capability), /V_CAPABILITY: evidence verification requires Linux with usable \/proc\/self\/fd/);
+  } finally { rmSync(withContext.root, { recursive: true, force: true }); }
+  const observed = fixture();
+  try {
+    hefesto(observed);
+    await assert.rejects(verifyArtifact(args(observed), { platform: "darwin" }), /V_CAPABILITY: evidence verification requires Linux with usable \/proc\/self\/fd/);
+    rmSync(join(observed.dir, `${observed.receipt.artifactId}.authorization.json.sha256`));
+    await assert.rejects(verifyArtifact(args(observed), { platform: "darwin" }), /V_CAPABILITY: evidence verification requires Linux with usable \/proc\/self\/fd/);
+  } finally { rmSync(observed.root, { recursive: true, force: true }); }
+  const absent = fixture();
+  try {
+    const value = await verifyArtifact(args(absent), { platform: "darwin" });
+    assert.equal(value.state, "staged");
+    assert.equal(value.smoke, "not-run-untrusted");
+    assert.equal(value.authorizationEvidence, undefined);
+  } finally { rmSync(absent.root, { recursive: true, force: true }); }
+});
+
+test("the CLI wrapper still reports only the generic failure line for a rejected evidence-mode verification, without leaking error details", () => {
+  const f = fixture();
+  try {
+    let stderr;
+    try { execFileSync(process.execPath, [fileURLToPath(new URL("./verify-private-local-diagnostics-artifact.mjs", import.meta.url)), ...args(f), "--audience", "hefesto", "--case-id", "CASE1"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { stderr = error.stderr; }
+    assert.equal(stderr, "private artifact verification failed\n");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("evidence-mode clock seam accepts a UTC RFC3339 string or its equivalent bigint instant identically, rejects a bare number, and the default clock still works", async () => {
+  const iso = "2026-06-01T00:00:00Z", instant = BigInt(Date.parse(iso)) * 1000000n, f = fixture();
+  try {
+    hefesto(f);
+    const extra = ["--audience", "hefesto", "--case-id", "CASE1"];
+    const viaString = await verifyArtifact([...args(f), ...extra], { clock: () => iso });
+    assert.equal(viaString.caseId, "CASE1");
+    assert.equal(viaString.authorizationEvidence, "unsigned");
+    const viaBigint = await verifyArtifact([...args(f), ...extra], { clock: () => instant });
+    assert.deepEqual(viaBigint, viaString);
+    await assert.rejects(verifyArtifact([...args(f), ...extra], { clock: () => Date.now() }), /E_AUTH: verificationTime must be UTC RFC3339/);
+    const viaDefault = await verifyArtifact([...args(f), ...extra]);
+    assert.equal(viaDefault.caseId, "CASE1");
+    assert.equal(viaDefault.authorizationEvidence, "unsigned");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
