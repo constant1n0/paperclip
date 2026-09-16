@@ -91,10 +91,22 @@ const procFd = (fd) => `/proc/self/fd/${fd}`;
 const childPath = (pinned, basename) => `${procFd(pinned.fd)}/${basename}`;
 const pinnedFs = { openSync, fstatSync, statSync, lstatSync, closeSync, readFileSync, readSync, realpathSync };
 const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+const closeQuietly = (fs, fd) => { if (fd === undefined) return; try { fs.closeSync(fd); } catch { /* best-effort: never mask a propagating error */ } };
+function closeAll(fs, fds) {
+  let closeError;
+  for (const fd of fds) { try { fs.closeSync(fd); } catch (error) { closeError ??= error; } }
+  return closeError;
+}
 function openDirectoryHandle(path, fs) {
-  const fd = fs.openSync(path, DIRECTORY_FLAGS), stat = fs.fstatSync(fd, { bigint: true });
-  if (!stat.isDirectory()) failDirectory();
-  return { fd, stat };
+  const fd = fs.openSync(path, DIRECTORY_FLAGS);
+  try {
+    const stat = fs.fstatSync(fd, { bigint: true });
+    if (!stat.isDirectory()) failDirectory();
+    return { fd, stat };
+  } catch (error) {
+    closeQuietly(fs, fd);
+    throw error;
+  }
 }
 
 export function detectPinnedDirectoryCapability(options = {}) {
@@ -118,7 +130,7 @@ export function acquirePinnedDirectory(path, options = {}) {
     if (proc.dev !== opened.stat.dev || proc.ino !== opened.stat.ino) failDirectory();
     return { fd, dev: opened.stat.dev, ino: opened.stat.ino };
   } catch (error) {
-    if (fd !== undefined) fs.closeSync(fd);
+    closeQuietly(fs, fd);
     if (error instanceof Error && /^V_/.test(error.message)) throw error;
     classify(error, failDirectory);
   }
@@ -134,7 +146,7 @@ export function proveDirectoryAlias(path, pinned, options = {}) {
   } catch (error) {
     classify(error, failDirectory);
   } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    closeQuietly(fs, fd);
   }
 }
 
@@ -155,12 +167,12 @@ function readPinnedChild(pinned, entry, fs) {
     if (!before.isFile() || before.nlink !== 1n || before.size < 1n || before.size > BigInt(entry.limit)) fail("unsafe file");
     fd = fs.openSync(anchored, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fs.fstatSync(fd, { bigint: true });
-    if (opened.dev !== before.dev || opened.ino !== before.ino) failRace();
+    if (opened.dev !== before.dev || opened.ino !== before.ino || opened.nlink !== 1n) failRace();
     const bytes = fs.readFileSync(fd), after = fs.fstatSync(fd, { bigint: true });
-    if (BigInt(bytes.length) !== before.size || after.size !== before.size) failRace();
-    return { basename: entry.basename, limit: entry.limit, fd, dev: opened.dev, ino: opened.ino, nlink: opened.nlink, size: after.size, mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs, sha256: digest(bytes) };
+    if (BigInt(bytes.length) !== before.size || after.size !== before.size || after.nlink !== 1n) failRace();
+    return { basename: entry.basename, limit: entry.limit, fd, dev: opened.dev, ino: opened.ino, nlink: 1n, size: after.size, mtimeNs: after.mtimeNs, ctimeNs: after.ctimeNs, sha256: digest(bytes) };
   } catch (error) {
-    if (fd !== undefined) fs.closeSync(fd);
+    closeQuietly(fs, fd);
     if (error instanceof Error && /^V_/.test(error.message)) throw error;
     classify(error, failRace);
   }
@@ -197,6 +209,7 @@ export function verifyPinnedDirectory(path, entries, options = {}) {
   for (const entry of entries) name(entry.basename, "basename");
   const pinned = acquirePinnedDirectory(path, { fs });
   const children = [];
+  let result, primaryError, failed = false;
   try {
     checkpoint("acquired");
     const stamp = captureDirectoryStamp(pinned, fs);
@@ -217,9 +230,13 @@ export function verifyPinnedDirectory(path, entries, options = {}) {
     checkpoint("step4-metadata-complete");
     for (const child of children) verifyChildContent(child, fs);
     checkpoint("step4-complete");
-    return { dev: pinned.dev, ino: pinned.ino, children: children.map(({ basename, sha256, size }) => ({ basename, sha256, bytes: Number(size) })) };
-  } finally {
-    for (const child of children) fs.closeSync(child.fd);
-    fs.closeSync(pinned.fd);
+    result = { dev: pinned.dev, ino: pinned.ino, children: children.map(({ basename, sha256, size }) => ({ basename, sha256, bytes: Number(size) })) };
+  } catch (error) {
+    failed = true;
+    primaryError = error;
   }
+  const closeError = closeAll(fs, [...children.map((child) => child.fd), pinned.fd]);
+  if (failed) throw primaryError;
+  if (closeError) throw closeError;
+  return result;
 }

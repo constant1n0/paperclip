@@ -222,3 +222,49 @@ test("an ancestor symlink in the caller path is accepted (acquisition canonicali
     } finally { closeSync(pinned.fd); }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a hard link appearing during a child open or read is a race, never accepted as the recorded baseline", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pinned-nlink-"));
+  writeFileSync(join(dir, "present.json"), '{"n":"present.json"}');
+  const entries = [{ basename: "present.json", limit: 4096 }];
+  try {
+    for (const which of [0, 1]) {
+      let n = 0;
+      const seam = { ...fsReal, fstatSync: (fd, o) => { const s = fsReal.fstatSync(fd, o); return s.isFile?.() && n++ === which ? { ...s, nlink: 2n } : s; } };
+      assert.throws(() => verifyPinnedDirectory(dir, entries, { fs: seam }), /V_RACE: inspection bundle changed during verification/);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("openDirectoryHandle closes its FD when fstat fails or reports a non-directory, for both acquire and the alias check, without reclassifying the error", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pinned-leak-"));
+  const cases = [
+    { fstatSync: () => { throw Object.assign(new Error("io"), { code: "EIO" }); }, expect: (e) => e.code === "EIO" },
+    { fstatSync: () => ({ isDirectory: () => false }), expect: /V_DIRECTORY: artifact directory is unsafe/ },
+  ];
+  try {
+    for (const { fstatSync, expect } of cases) {
+      let openedFd, closed = [];
+      const seam = { ...fsReal, openSync: (...a) => (openedFd = fsReal.openSync(...a)), fstatSync, closeSync: (fd) => { closed.push(fd); return fsReal.closeSync(fd); } };
+      assert.throws(() => acquirePinnedDirectory(dir, { fs: seam }), expect);
+      assert.deepEqual(closed, [openedFd]);
+      const pinned = acquirePinnedDirectory(dir, { fs: fsReal });
+      try { closed = []; assert.throws(() => proveDirectoryAlias(dir, pinned, { fs: seam }), expect); assert.deepEqual(closed, [openedFd]); }
+      finally { closeSync(pinned.fd); }
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a close failure during cleanup never masks a propagating V_RACE, and every FD still receives a close attempt", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pinned-cleanup-"));
+  writeFileSync(join(dir, "a.json"), "{}");
+  writeFileSync(join(dir, "b.json"), "{}");
+  const entries = [{ basename: "a.json", limit: 4096 }, { basename: "b.json", limit: 4096 }, { basename: "extra.json", limit: 4096 }];
+  const attempts = [];
+  let calls = 0;
+  const seam = { ...fsReal, closeSync: (fd) => { attempts.push(fd); if (calls++ === 0) throw new Error("close failed"); return fsReal.closeSync(fd); } };
+  try {
+    assert.throws(() => verifyPinnedDirectory(dir, entries, { fs: seam, onCheckpoint: (p) => { if (p === "step1-complete") writeFileSync(join(dir, "extra.json"), "{}"); } }), /V_RACE: inspection bundle changed during verification/);
+    assert.equal(attempts.length, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
