@@ -447,3 +447,20 @@ test("the CLI wrapper still reports only the generic failure line for a rejected
     assert.equal(stderr, "private artifact verification failed\n");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("evidence-mode clock seam accepts a UTC RFC3339 string or its equivalent bigint instant identically, rejects a bare number, and the default clock still works", async () => {
+  const iso = "2026-06-01T00:00:00Z", instant = BigInt(Date.parse(iso)) * 1000000n, f = fixture();
+  try {
+    hefesto(f);
+    const extra = ["--audience", "hefesto", "--case-id", "CASE1"];
+    const viaString = await verifyArtifact([...args(f), ...extra], { clock: () => iso });
+    assert.equal(viaString.caseId, "CASE1");
+    assert.equal(viaString.authorizationEvidence, "unsigned");
+    const viaBigint = await verifyArtifact([...args(f), ...extra], { clock: () => instant });
+    assert.deepEqual(viaBigint, viaString);
+    await assert.rejects(verifyArtifact([...args(f), ...extra], { clock: () => Date.now() }), /E_AUTH: verificationTime must be UTC RFC3339/);
+    const viaDefault = await verifyArtifact([...args(f), ...extra]);
+    assert.equal(viaDefault.caseId, "CASE1");
+    assert.equal(viaDefault.authorizationEvidence, "unsigned");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
