@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -30,6 +30,198 @@ const optimus = (f, extra = {}) => authFixture(f, { audience: "optimus", caseId:
 test("validates benign and malicious five-file sets without executing archive-controlled JS", async () => { for (const malicious of [false, true]) { const f = fixture({ malicious }); try { const value = await verifyArtifact(args(f)); assert.equal(value.state, "staged"); assert.equal(value.smoke, "not-run-untrusted"); assert.equal(existsSync(f.sentinel), false); } finally { rmSync(f.root, { recursive: true, force: true }); } } });
 test("rejects static archive, package, bin, shebang, receipt-diagnostic, and argument deviations without smoke", async () => { for (const value of [[], ["--artifact-dir", "/x", "--receipt", "../x"], ["--require-authorized"]]) assert.throws(() => parseVerificationArgs(value), /V_/); const bad = fixture({ index: "x" }); try { await assert.rejects(verifyArtifact(args(bad)), /A_EXEC/); assert.equal(existsSync(bad.sentinel), false); } finally { rmSync(bad.root, { recursive: true, force: true }); } const f = fixture(); try { const receiptPath = join(f.dir, f.receiptName), original = readFileSync(receiptPath), receipt = JSON.parse(original); receipt.diagnostics.commit = "a".repeat(40); writeFileSync(receiptPath, canonicalJson(receipt)); await assert.rejects(verifyArtifact(args(f)), /E_RECEIPT/); writeFileSync(receiptPath, original); rmSync(join(f.dir, f.receipt.artifact.filename)); symlinkSync("/etc/passwd", join(f.dir, f.receipt.artifact.filename)); await assert.rejects(verifyArtifact(args(f)), /V_/); } finally { rmSync(f.root, { recursive: true, force: true }); } });
 test("CLI explicitly reports that untrusted smoke was not run", () => { const f = fixture(); try { const out = JSON.parse(execFileSync(process.execPath, [fileURLToPath(new URL("./verify-private-local-diagnostics-artifact.mjs", import.meta.url)), ...args(f)], { encoding: "utf8" })); assert.equal(out.smoke, "not-run-untrusted"); } finally { rmSync(f.root, { recursive: true, force: true }); } });
+
+// Expected fields and ordering are fixed by the legacy contract, not verifier output.
+// Hash the fixture inputs before verification: tar metadata need not be reproducible.
+function legacyExpectation(f) {
+  const artifact = readFileSync(join(f.dir, f.receipt.artifact.filename));
+  const artifactSha256 = digest(artifact);
+  const artifactId = `paperclipai-local-diagnostics-0.3.1-cccccccccccc-${artifactSha256.slice(0, 16)}`;
+  const basenames = [".receipt.json", ".receipt.sha256", ".verification.json", ".verification.sha256", ".tgz"]
+    .map((suffix) => `${artifactId}${suffix}`);
+  const contents = new Map(basenames.map((basename) => [basename, readFileSync(join(f.dir, basename))]));
+  const snapshot = basenames.map((basename) => ({ basename, sha256: digest(contents.get(basename)), bytes: contents.get(basename).length }));
+  const receiptSha256 = snapshot[0].sha256, verificationSha256 = snapshot[2].sha256;
+  const manifestSha256 = digest(readFileSync(join(f.root, "package", "package.json")));
+  const result = Object.freeze({ state: "staged", smoke: "not-run-untrusted", artifactId, artifactSha256, receiptSha256, verificationSha256, manifestSha256 });
+  const stdout = Buffer.from(`{"artifactId":"${artifactId}","artifactSha256":"${artifactSha256}","manifestSha256":"${manifestSha256}","receiptSha256":"${receiptSha256}","smoke":"not-run-untrusted","state":"staged","verificationSha256":"${verificationSha256}"}\n`);
+  return { basenames, contents, snapshot, result, stdout };
+}
+
+test("legacy dispatch preserves the complete frozen result and ordered five-file snapshots and EOF re-reads", async () => {
+  const f = fixture({ malicious: true });
+  try {
+    const expected = legacyExpectation(f), opened = new Map(), reads = [], rereads = [];
+    let directoryFd, metadataComplete = false, completed = false;
+    const seam = {
+      ...fsReal,
+      openSync(path, flags) {
+        if (path !== f.dir) assert.equal(path, `/proc/self/fd/${directoryFd}/${expected.basenames[opened.size]}`);
+        const fd = openSync(path, flags);
+        if (path === f.dir) directoryFd ??= fd;
+        else opened.set(fd, { basename: expected.basenames[opened.size], chunks: [], position: 0 });
+        return fd;
+      },
+      readFileSync(fd) {
+        const { basename } = opened.get(fd), bytes = readFileSync(fd);
+        assert.deepEqual(bytes, expected.contents.get(basename));
+        reads.push({ basename, sha256: digest(bytes), bytes: bytes.length });
+        return bytes;
+      },
+      readSync(fd, buffer, offset, length, position) {
+        assert.equal(metadataComplete, true);
+        assert.equal(completed, false);
+        const child = opened.get(fd);
+        assert.equal(position, child.position);
+        const count = readSync(fd, buffer, offset, length, position);
+        child.position += count;
+        child.chunks.push(Buffer.from(buffer.subarray(offset, offset + count)));
+        if (count === 0) {
+          const bytes = Buffer.concat(child.chunks);
+          assert.deepEqual(bytes, expected.contents.get(child.basename));
+          rereads.push({ basename: child.basename, sha256: digest(bytes), bytes: bytes.length });
+        }
+        return count;
+      },
+    };
+    const result = await verifyArtifact(args(f), { fs: seam, onCheckpoint(point) {
+      if (point === "step4-metadata-complete") {
+        assert.deepEqual(rereads, []);
+        metadataComplete = true;
+      }
+      if (point === "step4-complete") {
+        assert.deepEqual(reads, expected.snapshot);
+        assert.deepEqual(rereads, expected.snapshot);
+        completed = true;
+      }
+    } });
+    assert.equal(completed, true);
+    assert.deepEqual(result, expected.result);
+    assert.deepEqual(await verifyArtifact(args(f), { platform: "darwin" }), expected.result);
+    assert.equal(existsSync(f.sentinel), false);
+    for (const fd of [directoryFd, ...opened.keys()]) assert.throws(() => fstatSync(fd), { code: "EBADF" });
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+    assert.equal(existsSync(f.root), false);
+  }
+});
+
+test("legacy CLI preserves exact JSON bytes and four-argument grammar with empty success stderr", () => {
+  const f = fixture({ malicious: true });
+  const cli = fileURLToPath(new URL("./verify-private-local-diagnostics-artifact.mjs", import.meta.url));
+  try {
+    const expected = legacyExpectation(f);
+    const run = (argv) => {
+      const child = spawnSync(process.execPath, [cli, ...argv], { stdio: ["ignore", "pipe", "pipe"], timeout: 10000 });
+      assert.equal(child.error, undefined);
+      assert.equal(child.signal, null);
+      return child;
+    };
+    assert.deepEqual(parseVerificationArgs(args(f)), { artifactDir: f.dir, receipt: f.receiptName, contextArgs: [] });
+    const success = run(args(f));
+    assert.equal(success.status, 0);
+    assert.deepEqual(success.stdout, expected.stdout);
+    assert.deepEqual(success.stderr, Buffer.alloc(0));
+    for (const invalid of [
+      [],
+      ["--artifact-dir", f.dir, "--receipt"],
+      ["--receipt", f.receiptName, "--artifact-dir", f.dir],
+      ["--artifact-dir", "relative", "--receipt", f.receiptName],
+      ["--artifact-dir", f.dir, "--receipt", `../${f.receiptName}`],
+      [...args(f), "--receipt", f.receiptName],
+      [...args(f), "--require-authorized"],
+      [...args(f), "unexpected"],
+    ]) {
+      const failure = run(invalid);
+      assert.equal(failure.status, 1);
+      assert.deepEqual(failure.stdout, Buffer.alloc(0));
+      assert.deepEqual(failure.stderr, Buffer.from("private artifact verification failed\n"));
+    }
+    assert.equal(existsSync(f.sentinel), false);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+    assert.equal(existsSync(f.root), false);
+  }
+});
+
+test("restored A-to-B-to-A during legacy and evidence child reads never consumes B and rejects the observed directory mutation", async () => {
+  for (const evidenceMode of [false, true]) {
+    const f = fixture(), held = join(f.root, "held-a"), replacement = join(f.root, "replacement-b");
+    try {
+      const expected = legacyExpectation(f);
+      if (evidenceMode) hefesto(f);
+      const basenames = [...expected.basenames.slice(0, 4),
+        ...(evidenceMode ? [`${expected.result.artifactId}.authorization.json`, `${expected.result.artifactId}.authorization.json.sha256`] : []),
+        expected.basenames[4]];
+      const originals = new Map(basenames.map((basename) => [basename, {
+        stat: statSync(join(f.dir, basename), { bigint: true }), bytes: readFileSync(join(f.dir, basename)),
+      }]));
+      mkdirSync(replacement);
+      for (const basename of basenames) writeFileSync(join(replacement, basename), "poisoned B bytes\n");
+      // A real, deterministic stamp change accompanies the rename attack; no fake kernel metadata.
+      // A harmless unobserved alias excursion alone is not required to fail by the contract.
+      utimesSync(f.dir, 0, 0);
+      const original = statSync(f.dir, { bigint: true }), other = statSync(replacement, { bigint: true });
+      assert.notEqual(original.ino, other.ino);
+      const reads = [], opened = new Map(), active = new Set();
+      let directoryFd, restored = false, reachedStep1 = false, reachedAlias = false;
+      const seam = {
+        ...fsReal,
+        openSync(path, flags) {
+          if (path !== f.dir) assert.equal(path, `/proc/self/fd/${directoryFd}/${basenames[opened.size]}`);
+          const fd = openSync(path, flags);
+          active.add(fd);
+          if (path === f.dir) directoryFd ??= fd;
+          else opened.set(fd, basenames[opened.size]);
+          return fd;
+        },
+        readFileSync(fd) {
+          const basename = opened.get(fd), wanted = originals.get(basename), stat = fstatSync(fd, { bigint: true });
+          assert.equal(stat.dev, wanted.stat.dev);
+          assert.equal(stat.ino, wanted.stat.ino);
+          const bytes = readFileSync(fd);
+          assert.deepEqual(bytes, wanted.bytes);
+          reads.push(basename);
+          if (reads.length > 1) assert.equal(statSync(f.dir, { bigint: true }).ino, other.ino);
+          return bytes;
+        },
+        closeSync(fd) { closeSync(fd); active.delete(fd); },
+      };
+      const extra = evidenceMode ? ["--audience", "hefesto", "--case-id", "CASE1"] : [];
+      await assert.rejects(verifyArtifact([...args(f), ...extra], { fs: seam, clock: () => "2026-06-01T00:00:00Z", onCheckpoint(point) {
+        if (point === `read:${f.receiptName}`) {
+          renameSync(f.dir, held);
+          renameSync(replacement, f.dir);
+          utimesSync(held, 1, 1);
+        }
+        if (point === `read:${expected.basenames[4]}`) {
+          renameSync(f.dir, replacement);
+          renameSync(held, f.dir);
+          const alias = statSync(f.dir, { bigint: true });
+          assert.equal(alias.dev, original.dev);
+          assert.equal(alias.ino, original.ino);
+          assert.notEqual(alias.mtimeNs, original.mtimeNs);
+          restored = true;
+        }
+        if (point === "step1-complete") {
+          assert.equal(restored, true);
+          assert.deepEqual(reads, basenames);
+          reachedStep1 = true;
+        }
+        if (point === "step2-complete") reachedAlias = true;
+      } }), { message: "V_RACE: inspection bundle changed during verification" });
+      assert.equal(restored, true);
+      assert.equal(reachedStep1, true);
+      assert.equal(reachedAlias, false);
+      assert.equal(statSync(f.dir, { bigint: true }).ino, original.ino);
+      assert.equal(active.size, 0);
+      assert.equal(existsSync(f.sentinel), false);
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+      assert.equal(existsSync(f.root), false);
+    }
+  }
+});
 
 test("pinned-directory capability probe reports support only on Linux with usable /proc/self/fd, and the capability guard throws V_CAPABILITY otherwise", () => {
   assert.equal(detectPinnedDirectoryCapability({ platform: "darwin", fs: fsReal }), false);
