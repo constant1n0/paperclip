@@ -128,7 +128,7 @@ describe("sandbox adapter execution targets", () => {
         clearTimeout(timeout);
         reject(error);
       });
-      child.on("exit", (exitCode) => {
+      child.on("close", (exitCode) => {
         clearTimeout(timeout);
         resolve(exitCode);
       });
