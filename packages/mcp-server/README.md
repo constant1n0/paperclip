@@ -13,7 +13,7 @@ The server reads its configuration from environment variables:
 - `PAPERCLIP_API_KEY` - bearer token used for `/api` requests
 - `PAPERCLIP_COMPANY_ID` - optional default company for company-scoped tools
 - `PAPERCLIP_AGENT_ID` - optional default agent for checkout helpers
-- `PAPERCLIP_RUN_ID` - optional run id forwarded on mutating requests
+- `PAPERCLIP_RUN_ID` - optional run id forwarded on mutating requests. Every tool also accepts an optional `runId` argument that overrides it for that call, for hosts whose server process outlives a single run (for example a long-lived agent gateway)
 
 Inside an active heartbeat, Paperclip also injects `PAPERCLIP_RUNTIME_TOOLS_*` variables. They enable the run-scoped `connections_search` and `connection_request` tools and expire with the run.
 
