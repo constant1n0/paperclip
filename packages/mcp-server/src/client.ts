@@ -101,7 +101,7 @@ export class PaperclipApiClient {
     if (options.body !== undefined) {
       headers["Content-Type"] = "application/json";
     }
-    const runId = callRunIdStorage.getStore() ?? this.config.runId;
+    const runId = this.config.runId ?? callRunIdStorage.getStore();
     if ((options.includeRunId ?? isWriteMethod(method)) && runId) {
       headers["X-Paperclip-Run-Id"] = runId;
     }

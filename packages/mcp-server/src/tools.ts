@@ -35,8 +35,8 @@ const callRunIdSchema = z
   .nullable()
   .optional()
   .describe(
-    "Paperclip run id for this call, sent as X-Paperclip-Run-Id on mutating requests. " +
-      "Overrides PAPERCLIP_RUN_ID. Hosts that keep this server alive across runs set it per call; omit it otherwise.",
+    "Paperclip run id for this call, sent as X-Paperclip-Run-Id on mutating Paperclip API requests " +
+      "when PAPERCLIP_RUN_ID is not set. Hosts that keep this server alive across runs set it per call; omit it otherwise.",
   );
 
 const callRunIdArgsSchema = z.object({ runId: callRunIdSchema });

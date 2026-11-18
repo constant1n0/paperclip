@@ -463,7 +463,7 @@ describe("per-call run id", () => {
     expect(runIdHeaders(fetchMock)).toEqual([CALL_RUN_ID]);
   });
 
-  it("prefers the per-call run id over PAPERCLIP_RUN_ID", async () => {
+  it("keeps PAPERCLIP_RUN_ID over a per-call run id", async () => {
     const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ ok: true }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -473,7 +473,7 @@ describe("per-call run id", () => {
       runId: CALL_RUN_ID,
     });
 
-    expect(runIdHeaders(fetchMock)).toEqual([CALL_RUN_ID]);
+    expect(runIdHeaders(fetchMock)).toEqual(["33333333-3333-3333-3333-333333333333"]);
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(String(init.body))).not.toHaveProperty("runId");
   });
