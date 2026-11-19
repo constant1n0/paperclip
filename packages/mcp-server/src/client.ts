@@ -1,4 +1,17 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { PaperclipMcpConfig } from "./config.js";
+
+const callRunIdStorage = new AsyncLocalStorage<string>();
+
+/**
+ * Runs `fn` with a run id that overrides PAPERCLIP_RUN_ID for every request it makes.
+ * Hosts whose server process outlives a single run, such as a long-lived agent gateway,
+ * cannot set the run id through the environment and pass it per tool call instead.
+ */
+export function withCallRunId<T>(runId: string | null | undefined, fn: () => Promise<T>): Promise<T> {
+  const trimmed = runId?.trim();
+  return trimmed ? callRunIdStorage.run(trimmed, fn) : fn();
+}
 
 export class PaperclipApiError extends Error {
   readonly status: number;
@@ -88,8 +101,9 @@ export class PaperclipApiClient {
     if (options.body !== undefined) {
       headers["Content-Type"] = "application/json";
     }
-    if ((options.includeRunId ?? isWriteMethod(method)) && this.config.runId) {
-      headers["X-Paperclip-Run-Id"] = this.config.runId;
+    const runId = this.config.runId ?? callRunIdStorage.getStore();
+    if ((options.includeRunId ?? isWriteMethod(method)) && runId) {
+      headers["X-Paperclip-Run-Id"] = runId;
     }
 
     const response = await fetch(url, {

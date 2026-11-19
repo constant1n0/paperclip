@@ -17,7 +17,7 @@ import {
   upsertIssueDocumentSchema,
   linkIssueApprovalSchema,
 } from "@paperclipai/shared";
-import { PaperclipApiClient } from "./client.js";
+import { PaperclipApiClient, withCallRunId } from "./client.js";
 import { formatErrorResponse, formatTextResponse } from "./format.js";
 
 export interface ToolDefinition {
@@ -29,6 +29,18 @@ export interface ToolDefinition {
   }>;
 }
 
+const callRunIdSchema = z
+  .string()
+  .guid()
+  .nullable()
+  .optional()
+  .describe(
+    "Paperclip run id for this call, sent as X-Paperclip-Run-Id on mutating Paperclip API requests " +
+      "when PAPERCLIP_RUN_ID is not set. Hosts that keep this server alive across runs set it per call; omit it otherwise.",
+  );
+
+const callRunIdArgsSchema = z.object({ runId: callRunIdSchema });
+
 function makeTool<TSchema extends z.ZodRawShape>(
   name: string,
   description: string,
@@ -38,11 +50,13 @@ function makeTool<TSchema extends z.ZodRawShape>(
   return {
     name,
     description,
-    schema,
+    schema: z.object({ ...schema.shape, runId: callRunIdSchema }),
     execute: async (input) => {
       try {
-        const parsed = schema.parse(input);
-        return formatTextResponse(await execute(parsed));
+        const { runId, ...toolInput } = input;
+        const callRunId = callRunIdArgsSchema.parse({ runId }).runId;
+        const parsed = schema.parse(toolInput);
+        return formatTextResponse(await withCallRunId(callRunId, () => execute(parsed)));
       } catch (error) {
         return formatErrorResponse(error);
       }

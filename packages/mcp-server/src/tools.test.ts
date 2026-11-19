@@ -415,3 +415,137 @@ describe("paperclip MCP tools", () => {
     expect(response.content[0]?.text).toContain("must not contain '..'");
   });
 });
+
+describe("per-call run id", () => {
+  const CALL_RUN_ID = "44444444-4444-4444-4444-444444444444";
+  const OTHER_RUN_ID = "55555555-5555-5555-5555-555555555555";
+
+  function toolFor(name: string, runId: string | null) {
+    const client = new PaperclipApiClient({
+      apiUrl: "http://localhost:3100/api",
+      apiKey: "token-123",
+      companyId: "11111111-1111-1111-1111-111111111111",
+      agentId: "22222222-2222-2222-2222-222222222222",
+      runId,
+    });
+    const tool = createToolDefinitions(client).find((candidate) => candidate.name === name);
+    if (!tool) throw new Error(`Missing tool ${name}`);
+    return tool;
+  }
+
+  function runIdHeaders(fetchMock: ReturnType<typeof vi.fn>) {
+    return fetchMock.mock.calls.map(
+      ([, init]) => (init as RequestInit).headers as Record<string, string>,
+    ).map((headers) => headers["X-Paperclip-Run-Id"]);
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("declares an optional runId argument on every tool", () => {
+    const tools = createToolDefinitions(makeClient());
+    const missing = tools.filter((tool) => !("runId" in tool.schema.shape)).map((tool) => tool.name);
+    expect(missing).toEqual([]);
+    expect(tools.every((tool) => tool.schema.shape.runId.safeParse(undefined).success)).toBe(true);
+  });
+
+  it("sends the per-call run id when PAPERCLIP_RUN_ID is not set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await toolFor("paperclipAddComment", null).execute({
+      issueId: "PAP-1135",
+      body: "hello",
+      runId: CALL_RUN_ID,
+    });
+
+    expect(runIdHeaders(fetchMock)).toEqual([CALL_RUN_ID]);
+  });
+
+  it("keeps PAPERCLIP_RUN_ID over a per-call run id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getTool("paperclipUpdateIssue").execute({
+      issueId: "PAP-1135",
+      status: "done",
+      runId: CALL_RUN_ID,
+    });
+
+    expect(runIdHeaders(fetchMock)).toEqual(["33333333-3333-3333-3333-333333333333"]);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).not.toHaveProperty("runId");
+  });
+
+  it("sends the per-call run id through the generic API request tool", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await toolFor("paperclipApiRequest", null).execute({
+      method: "POST",
+      path: "/issues/PAP-1135/comments",
+      jsonBody: JSON.stringify({ body: "hello" }),
+      runId: CALL_RUN_ID,
+    });
+
+    expect(runIdHeaders(fetchMock)).toEqual([CALL_RUN_ID]);
+  });
+
+  it("keeps reads free of the run id header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ id: "PAP-1135" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await toolFor("paperclipGetIssue", null).execute({ issueId: "PAP-1135", runId: CALL_RUN_ID });
+
+    expect(runIdHeaders(fetchMock)).toEqual([undefined]);
+  });
+
+  it("sends no run id header when neither the call nor the environment has one", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await toolFor("paperclipUpdateIssue", null).execute({ issueId: "PAP-1135", status: "done" });
+
+    expect(runIdHeaders(fetchMock)).toEqual([undefined]);
+  });
+
+  it("rejects a malformed run id without calling the API", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await toolFor("paperclipUpdateIssue", null).execute({
+      issueId: "PAP-1135",
+      status: "done",
+      runId: "not-a-run-id",
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.content[0]?.text).toContain("runId");
+  });
+
+  it("keeps concurrent calls on their own run ids", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return mockJsonResponse({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const tool = toolFor("paperclipAddComment", null);
+
+    await Promise.all([
+      tool.execute({ issueId: "PAP-1", body: "a", runId: CALL_RUN_ID }),
+      tool.execute({ issueId: "PAP-2", body: "b", runId: OTHER_RUN_ID }),
+    ]);
+
+    const byUrl = Object.fromEntries(
+      fetchMock.mock.calls.map(([url, init]) => [
+        String(url),
+        ((init as RequestInit).headers as Record<string, string>)["X-Paperclip-Run-Id"],
+      ]),
+    );
+    expect(byUrl).toEqual({
+      "http://localhost:3100/api/issues/PAP-1/comments": CALL_RUN_ID,
+      "http://localhost:3100/api/issues/PAP-2/comments": OTHER_RUN_ID,
+    });
+  });
+});
