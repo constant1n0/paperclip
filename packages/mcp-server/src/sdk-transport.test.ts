@@ -81,6 +81,8 @@ describe("per-call run id through the MCP SDK", () => {
     });
 
     expect(result.isError).toBe(true);
+    const [first] = result.content as Array<{ type: string; text?: string }>;
+    expect(first?.text).toMatch(/Input validation error: .*\brunId\b/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
